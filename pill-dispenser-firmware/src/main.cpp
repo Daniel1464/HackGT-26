@@ -211,6 +211,36 @@ void checkMedicineSchedule() {
   }
 }
 
+/** Print the cached medicine records (one line per medicine) to serial. */
+void printMedicineCache() {
+  uint8_t record[MEDICINE_DOSE_BYTES * MEDICINE_MAX_DOSES];
+  for (uint8_t medicineId = 0; medicineId <= 1; medicineId++) {
+    const size_t used = readMedicineRecord(medicineId, record, sizeof(record));
+    Serial.print("Medicine ");
+    Serial.print(medicineId);
+    Serial.print(" cached doses: ");
+    if (used == 0) {
+      Serial.println("none");
+      continue;
+    }
+    for (size_t offset = 0; offset + MEDICINE_DOSE_BYTES <= used; offset += MEDICINE_DOSE_BYTES) {
+      const uint16_t minutes = static_cast<uint16_t>(record[offset + 1]) |
+        (static_cast<uint16_t>(record[offset + 2]) << 8);
+      const uint32_t dose = static_cast<uint32_t>(record[offset + 3]) |
+        (static_cast<uint32_t>(record[offset + 4]) << 8) |
+        (static_cast<uint32_t>(record[offset + 5]) << 16) |
+        (static_cast<uint32_t>(record[offset + 6]) << 24);
+      char timeText[6];
+      snprintf(timeText, sizeof(timeText), "%02u:%02u", minutes / 60, minutes % 60);
+      Serial.print(timeText);
+      Serial.print(" UTC dose ");
+      Serial.print(dose);
+      Serial.print("; ");
+    }
+    Serial.println();
+  }
+}
+
 void setupBluetooth() {
   // Initialize the device with a local name
   NimBLEDevice::init(DEVICE_NAME);
@@ -322,6 +352,7 @@ void loop() {
     } else {
       Serial.println("not synchronized");
     }
+    printMedicineCache();
   }
   // Serial.print("Num Bluetooth Devices Connected: ");
   // Serial.println(pServer->getConnectedCount());
