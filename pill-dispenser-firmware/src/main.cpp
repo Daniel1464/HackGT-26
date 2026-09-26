@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ESP32Servo.h>
+#include <Preferences.h>
 #include "NimBLEDevice.h"
 
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
@@ -15,6 +16,42 @@ NimBLEServer *pServer;
 NimBLECharacteristic *helloWorld;
 NimBLECharacteristic *counter;
 NimBLECharacteristic *timeCharacteristic;
+Preferences persistentStorage;
+bool persistentStorageReady = false;
+
+/**
+ * Open the ESP32 NVS namespace used for pill-dispenser settings.
+ * Values written through this namespace survive resets and power loss.
+ */
+bool beginPersistentStorage() {
+  persistentStorageReady = persistentStorage.begin("pilldata", false);
+  return persistentStorageReady;
+}
+
+/** Write a UTF-8 string under key. Returns false if NVS is unavailable. */
+bool writePersistentString(const char *key, const std::string &value) {
+  if (!persistentStorageReady || key == nullptr) return false;
+  return persistentStorage.putString(key, value.c_str()) > 0;
+}
+
+/** Read a UTF-8 string, returning defaultValue when the key does not exist. */
+std::string readPersistentString(const char *key, const char *defaultValue = "") {
+  if (!persistentStorageReady || key == nullptr) return defaultValue;
+  const String stored = persistentStorage.getString(key, defaultValue);
+  return std::string(stored.c_str());
+}
+
+/** Write a signed 32-bit integer under key. Returns false if NVS is unavailable. */
+bool writePersistentInt(const char *key, int32_t value) {
+  if (!persistentStorageReady || key == nullptr) return false;
+  return persistentStorage.putInt(key, value) > 0;
+}
+
+/** Read a signed 32-bit integer, returning defaultValue when the key is absent. */
+int32_t readPersistentInt(const char *key, int32_t defaultValue = 0) {
+  if (!persistentStorageReady || key == nullptr) return defaultValue;
+  return persistentStorage.getInt(key, defaultValue);
+}
 
 uint64_t syncedUtcSeconds = 0;
 uint32_t syncedAtMillis = 0;
@@ -87,6 +124,9 @@ void setupBluetooth() {
 
 void setup() {
   Serial.begin(115200);
+  if (!beginPersistentStorage()) {
+    Serial.println("Warning: persistent storage could not be opened.");
+  }
   ESP32PWM::allocateTimer(0);
   myServo.setPeriodHertz(50);      // standard 50 Hz servo signal
   myServo.attach(SERVO_PIN, 1000, 2000); // min/max pulse widths in µs
