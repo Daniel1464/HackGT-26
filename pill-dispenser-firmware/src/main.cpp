@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <ArduinoJson.h>
 #include <ESP32Servo.h>
 #include <Preferences.h>
 #include "NimBLEDevice.h"
@@ -15,6 +14,10 @@
 #define A                   0.2347
 #define B                   0.051
 
+// Doses are stored as fixed-size raw records: [minutes since midnight UTC:u16 LE][dose:u32 LE].
+constexpr size_t MEDICINE_DOSE_BYTES = 6;
+constexpr size_t MEDICINE_MAX_DOSES = 32;
+
 
 Servo myServo;
 NimBLEServer *pServer;
@@ -22,25 +25,6 @@ NimBLECharacteristic *servoTarget;
 NimBLECharacteristic *timeCharacteristic;
 Preferences persistentStorage;
 bool persistentStorageReady = false;
-bool beamBreakStateKnown = false;
-bool lastBeamBreakState = false;
-
-/** Returns true when the beam-break sensor reports an object in the beam. */
-bool isBeamBroken() {
-  const int sensorLevel = digitalRead(BEAM_BREAK_PIN);
-  return BEAM_BREAK_ACTIVE_LOW ? sensorLevel == LOW : sensorLevel == HIGH;
-}
-
-/** Print only on beam state transitions so the Serial monitor stays readable. */
-void reportBeamBreakState() {
-  const bool beamBroken = isBeamBroken();
-  if (beamBreakStateKnown && beamBroken == lastBeamBreakState) return;
-
-  beamBreakStateKnown = true;
-  lastBeamBreakState = beamBroken;
-  Serial.print("Beam break: ");
-  Serial.println(beamBroken ? "DETECTED" : "CLEAR");
-}
 
 /**
  * Open the ESP32 NVS namespace used for pill-dispenser settings.
@@ -51,17 +35,18 @@ bool beginPersistentStorage() {
   return persistentStorageReady;
 }
 
-/** Write a UTF-8 string under key. Returns false if NVS is unavailable. */
-bool writePersistentString(const char *key, const std::string &value) {
-  if (!persistentStorageReady || key == nullptr) return false;
-  return persistentStorage.putString(key, value.c_str()) > 0;
+/** Write a raw byte buffer under key. Returns false if NVS is unavailable. */
+bool writePersistentBytes(const char *key, const uint8_t *data, size_t length) {
+  if (!persistentStorageReady || key == nullptr || data == nullptr || length == 0) return false;
+  return persistentStorage.putBytes(key, data, length) == length;
 }
 
-/** Read a UTF-8 string, returning defaultValue when the key does not exist. */
-std::string readPersistentString(const char *key, const char *defaultValue = "") {
-  if (!persistentStorageReady || key == nullptr) return defaultValue;
-  const String stored = persistentStorage.getString(key, defaultValue);
-  return std::string(stored.c_str());
+/** Read raw bytes from key into buffer, returning the number of bytes read. */
+size_t readPersistentBytes(const char *key, uint8_t *buffer, size_t capacity) {
+  if (!persistentStorageReady || key == nullptr || buffer == nullptr) return 0;
+  const size_t length = persistentStorage.getBytesLength(key);
+  if (length == 0 || length > capacity) return 0;
+  return persistentStorage.getBytes(key, buffer, length);
 }
 
 /** Write a signed 32-bit integer under key. Returns false if NVS is unavailable. */
@@ -80,59 +65,27 @@ String medicineStorageKey(uint8_t medicineId) {
   return String("medicine") + String(medicineId);
 }
 
-bool isValidMedicineRecord(JsonDocument &document, uint8_t expectedId) {
-  if (!document["medicine"].is<const char *>()) return false;
-  if (strlen(document["medicine"].as<const char *>()) == 0) return false;
-  if (!document["id"].is<int>() || document["id"].as<int>() != expectedId) return false;
-
-  JsonArray data = document["data"].as<JsonArray>();
-  if (data.isNull() || data.size() == 0 || data.size() > 32) return false;
-
-  for (JsonObject dose : data) {
-    if (!dose["time"].is<const char *>()) return false;
-    const std::string time = dose["time"].as<const char *>();
-    if (time.size() != 9 || time[2] != ':' || time.substr(5) != " UTC" ||
-        time[0] < '0' || time[0] > '2' || time[1] < '0' || time[1] > '9' ||
-        (time[0] == '2' && time[1] > '3') || time[3] < '0' || time[3] > '5' ||
-        time[4] < '0' || time[4] > '9') return false;
-    if (!dose["dose"].is<int>() || dose["dose"].as<int>() <= 0) return false;
-  }
-  return true;
-}
-
 /**
- * Validate and persist one medicine record.
+ * Read a stored medicine record into buffer, returning the number of bytes read.
  *
- * Records are stored separately by ID, so medicine 0 and medicine 1 can be
- * fetched independently. The JSON is normalized before it is written.
+ * A record is a whole number of fixed-size dose entries, so a length that is
+ * not a multiple of MEDICINE_DOSE_BYTES is treated as absent/corrupt.
  */
-bool writeMedicineJson(const std::string &json) {
-  if (json.empty() || json.size() > 4096) return false;
-  JsonDocument document;
-  const DeserializationError error = deserializeJson(document, json.c_str());
-  if (error) {
-    Serial.print("Invalid medicine JSON: ");
-    Serial.println(error.c_str());
-    return false;
-  }
-
-  if (!document["id"].is<int>()) return false;
-  const int rawId = document["id"].as<int>();
-  if (rawId < 0 || rawId > 1 || !isValidMedicineRecord(document, static_cast<uint8_t>(rawId))) {
-    return false;
-  }
-
-  String normalized;
-  serializeJson(document, normalized);
-  const String key = medicineStorageKey(static_cast<uint8_t>(rawId));
-  return writePersistentString(key.c_str(), std::string(normalized.c_str()));
+size_t readMedicineRecord(uint8_t medicineId, uint8_t *buffer, size_t capacity) {
+  if (medicineId > 1) return 0;
+  const String key = medicineStorageKey(medicineId);
+  const size_t bytes = readPersistentBytes(key.c_str(), buffer, capacity);
+  if (bytes % MEDICINE_DOSE_BYTES != 0) return 0;
+  return bytes;
 }
 
-/** Fetch a stored medicine record by ID, or an empty string if absent/invalid. */
-std::string readMedicineJson(uint8_t medicineId) {
-  if (medicineId > 1) return "";
+/** Persist a raw medicine record (a whole number of dose entries) for ID. */
+bool writeMedicineRecord(uint8_t medicineId, const uint8_t *data, size_t length) {
+  if (medicineId > 1 || data == nullptr || length == 0 ||
+      length > MEDICINE_DOSE_BYTES * MEDICINE_MAX_DOSES ||
+      length % MEDICINE_DOSE_BYTES != 0) return false;
   const String key = medicineStorageKey(medicineId);
-  return readPersistentString(key.c_str(), "");
+  return writePersistentBytes(key.c_str(), data, length);
 }
 
 constexpr size_t MEDICINE_PACKET_BYTES = 7;
@@ -155,30 +108,27 @@ bool appendMedicineDosePacket(const std::string &packet) {
   const uint32_t now = millis();
   const bool newTransfer = !medicinePacketSessionActive || activeMedicinePacketId != medicineId ||
     static_cast<uint32_t>(now - lastMedicinePacketAt) > MEDICINE_TRANSFER_GAP_MS;
-  JsonDocument document;
-  if (!newTransfer) {
-    const std::string stored = readMedicineJson(medicineId);
-    if (deserializeJson(document, stored.c_str())) return false;
+
+  uint8_t record[MEDICINE_DOSE_BYTES * MEDICINE_MAX_DOSES];
+  size_t used = 0;
+  if (newTransfer) {
+    // A new transfer replaces whatever was stored for this medicine.
+    used = 0;
   } else {
-    const std::string stored = readMedicineJson(medicineId);
-    if (stored.empty() || deserializeJson(document, stored.c_str())) {
-      document["medicine"] = String("Medicine ") + String(medicineId);
-      document["id"] = medicineId;
-      document["data"].to<JsonArray>();
-    }
-    document["data"].to<JsonArray>().clear();
+    used = readMedicineRecord(medicineId, record, sizeof(record));
+    if (used == 0) return false;
   }
+  if (used + MEDICINE_DOSE_BYTES > sizeof(record)) return false;
 
-  char timeText[10];
-  snprintf(timeText, sizeof(timeText), "%02u:%02u UTC", minutes / 60, minutes % 60);
-  JsonArray data = document["data"].as<JsonArray>();
-  JsonObject entry = data.add<JsonObject>();
-  entry["time"] = timeText;
-  entry["dose"] = dose;
+  record[used + 0] = static_cast<uint8_t>(minutes & 0xFF);
+  record[used + 1] = static_cast<uint8_t>((minutes >> 8) & 0xFF);
+  record[used + 2] = static_cast<uint8_t>(dose & 0xFF);
+  record[used + 3] = static_cast<uint8_t>((dose >> 8) & 0xFF);
+  record[used + 4] = static_cast<uint8_t>((dose >> 16) & 0xFF);
+  record[used + 5] = static_cast<uint8_t>((dose >> 24) & 0xFF);
+  used += MEDICINE_DOSE_BYTES;
 
-  String normalized;
-  serializeJson(document, normalized);
-  const bool saved = writeMedicineJson(std::string(normalized.c_str()));
+  const bool saved = writeMedicineRecord(medicineId, record, used);
   if (saved) {
     activeMedicinePacketId = medicineId;
     lastMedicinePacketAt = now;
@@ -307,7 +257,6 @@ void loop() {
   loopCounter++;
   bool print = loopCounter % 10 == 0;
   syncClockFromCharacteristic();
-  reportBeamBreakState();
 
   if (print) {
     Serial.print("Servo attached? ");
