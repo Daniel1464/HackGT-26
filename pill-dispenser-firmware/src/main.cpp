@@ -14,8 +14,9 @@
 #define A                   0.2347
 #define B                   0.051
 
-// Doses are stored as fixed-size raw records: [minutes since midnight UTC:u16 LE][dose:u32 LE].
-constexpr size_t MEDICINE_DOSE_BYTES = 6;
+// Doses are stored verbatim as the received packet:
+// [medicine ID:u8][minutes since midnight UTC:u16 LE][dose:u32 LE].
+constexpr size_t MEDICINE_DOSE_BYTES = 7;
 constexpr size_t MEDICINE_MAX_DOSES = 32;
 
 
@@ -120,12 +121,8 @@ bool appendMedicineDosePacket(const std::string &packet) {
   }
   if (used + MEDICINE_DOSE_BYTES > sizeof(record)) return false;
 
-  record[used + 0] = static_cast<uint8_t>(minutes & 0xFF);
-  record[used + 1] = static_cast<uint8_t>((minutes >> 8) & 0xFF);
-  record[used + 2] = static_cast<uint8_t>(dose & 0xFF);
-  record[used + 3] = static_cast<uint8_t>((dose >> 8) & 0xFF);
-  record[used + 4] = static_cast<uint8_t>((dose >> 16) & 0xFF);
-  record[used + 5] = static_cast<uint8_t>((dose >> 24) & 0xFF);
+  // Store the packet verbatim so the persisted layout matches the wire format.
+  memcpy(record + used, packet.data(), MEDICINE_DOSE_BYTES);
   used += MEDICINE_DOSE_BYTES;
 
   const bool saved = writeMedicineRecord(medicineId, record, used);
@@ -197,8 +194,8 @@ void checkMedicineSchedule() {
   for (uint8_t medicineId = 0; medicineId <= 1; medicineId++) {
     const size_t used = readMedicineRecord(medicineId, record, sizeof(record));
     for (size_t offset = 0; offset + MEDICINE_DOSE_BYTES <= used; offset += MEDICINE_DOSE_BYTES) {
-      const uint16_t minutes = static_cast<uint16_t>(record[offset]) |
-        (static_cast<uint16_t>(record[offset + 1]) << 8);
+      const uint16_t minutes = static_cast<uint16_t>(record[offset + 1]) |
+        (static_cast<uint16_t>(record[offset + 2]) << 8);
       if (minutes == minutesNow) {
         Serial.println("time to take medicine");
       }

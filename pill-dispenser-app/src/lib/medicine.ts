@@ -45,14 +45,6 @@ export function parseMedicineTranscript(transcript: string): MedicineRecord {
   return validateMedicine({ medicine: header[1], id: Number(words[header[2].toLowerCase()] ?? header[2]), data });
 }
 
-// ASCII JSON escaping preserves Unicode names while permitting 20-byte BLE chunks.
-export function medicineWireJson(record: MedicineRecord): string {
-  const json = JSON.stringify(validateMedicine(record)).replace(/[\u007f-\uffff]/g,
-    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
-  if (json.length > 4096) throw new Error('Medicine JSON exceeds the 4096-byte device limit.');
-  return json;
-}
-
 /** Fixed binary packet: medicine ID (u8), UTC minutes (u16 LE), dose (u32 LE). */
 export function medicineDosePacket(record: MedicineRecord, entry: { time: string; dose: number }): ArrayBuffer {
   const validated = validateMedicine(record);
