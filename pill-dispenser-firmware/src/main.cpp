@@ -16,7 +16,6 @@ Servo myServo;
 NimBLEServer *pServer;
 NimBLECharacteristic *servoTarget;
 NimBLECharacteristic *timeCharacteristic;
-float velocity;
 Preferences persistentStorage;
 bool persistentStorageReady = false;
 
@@ -151,20 +150,25 @@ void setup() {
   setupBluetooth();
 }
 
+int loopCounter = 0;
+
 void loop() {
+  loopCounter++;
+  bool print = loopCounter % 10 == 0;
   syncClockFromCharacteristic();
 
-  Serial.print("Servo attached? ");
-  Serial.println(myServo.attached() ? "true" : "false");
+  if (print) {
+    Serial.print("Servo attached? ");
+    Serial.println(myServo.attached() ? "true" : "false");
+  }
 
   int servoTargetVal = servoTarget->getValue<int>();
   myServo.write(servoTargetVal);
 
-  Serial.print("Servo Val: ");
-  Serial.println(myServo.read());
-  velocity = A + B * (myServo.read() - 96);
-  Serial.print("Velocity: ");
-  Serial.println(velocity);
+  if (print) {
+    Serial.print("Servo Val: ");
+    Serial.println(myServo.read());
+  }
 
   if (clockSynchronized) {
     const std::string currentTime = std::to_string(currentUtcSeconds());
@@ -173,13 +177,15 @@ void loop() {
     // the next loop iteration.
     lastTimePayload = currentTime;
   }
-  Serial.print("Num Devices Connected: ");
-  Serial.println(pServer->getConnectedCount());
-  Serial.print("UTC time: ");
-  if (clockSynchronized) {
-    Serial.println(static_cast<unsigned long>(currentUtcSeconds()));
-  } else {
-    Serial.println("not synchronized");
+  if (print) {
+    Serial.print("Num Devices Connected: ");
+    Serial.println(pServer->getConnectedCount());
+    Serial.print("UTC time: ");
+    if (clockSynchronized) {
+      Serial.println(static_cast<unsigned long>(currentUtcSeconds()));
+    } else {
+      Serial.println("not synchronized");
+    }
   }
   // Serial.print("Num Bluetooth Devices Connected: ");
   // Serial.println(pServer->getConnectedCount());
