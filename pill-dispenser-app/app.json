@@ -40,7 +40,13 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-      ["expo-audio", { "microphonePermission": "Allow recording medicine schedules for transcription.", "enableBackgroundPlayback": false }],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow recording medicine schedules for transcription.",
+          "enableBackgroundPlayback": false
+        }
+      ],
       "expo-router",
       [
         "expo-splash-screen",
@@ -65,12 +71,12 @@
         "expo-build-properties",
         {
           "ios": {
-            "enableSceneSupport": true
+            "enableSceneSupport": true,
+            "deploymentTarget": "27.0"
           }
         }
       ],
-      "@livekit/react-native-expo-plugin",
-      "@config-plugins/react-native-webrtc"
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -4,6 +4,7 @@
 .venv
 .pio
 .pnpm-store/
+pill-dispenser-app/.env
 
 # dependencies
 node_modules/
