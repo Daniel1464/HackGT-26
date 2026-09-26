@@ -3,14 +3,19 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import { BleManager, State, type Device, type Subscription } from 'react-native-ble-plx';
 
 import { CounterCharacteristicUUID, CounterServiceUUIDs } from '@/constants/ble';
-import { parseCounterValue, type BleCounterStatus, type UseBleCounterResult } from '@/lib/ble-counter';
+import {
+  encodeServoValue,
+  isValidServoValue,
+  MAX_SERVO_VALUE,
+  MIN_SERVO_VALUE,
+  type BleCounterStatus,
+  type UseBleCounterResult,
+} from '@/lib/ble-counter';
 
 /** How long the service filtered scan runs before the broad scan takes over. */
 const FILTERED_SCAN_TIMEOUT_MS = 8_000;
 /** How long the broad scan runs before the peripheral is considered missing. */
 const BROAD_SCAN_TIMEOUT_MS = 6_000;
-/** The firmware rewrites the counter once per second, so poll at the same rate. */
-const POLL_INTERVAL_MS = 1_000;
 /** iOS reports an unknown Bluetooth state until its stack has finished starting. */
 const BLUETOOTH_STATE_TIMEOUT_MS = 5_000;
 const BLUETOOTH_STATE_POLL_MS = 250;
@@ -22,7 +27,8 @@ const BLUETOOTH_STATE_POLL_MS = 250;
 type BleSession = {
   device: Device | null;
   subscriptions: Subscription[];
-  pollTimer: ReturnType<typeof setInterval> | null;
+  /** Writes a Base64 encoded servo angle to the connected peripheral. */
+  writeValue: ((valueBase64: string) => Promise<unknown>) | null;
 };
 
 function normalizeUuid(uuid: string): string {
@@ -149,12 +155,12 @@ function scanForDevice(
 }
 
 /**
- * Connects to the ESP32 pill dispenser and keeps the broadcasted counter up to
- * date. The link is opened on mount and released on unmount.
+ * Connects to the ESP32 pill dispenser and broadcasts servo angles to it. The
+ * link is opened on mount and released on unmount.
  */
 export function useBleCounter(): UseBleCounterResult {
   const [status, setStatus] = useState<BleCounterStatus>('idle');
-  const [counter, setCounter] = useState<number | null>(null);
+  const [servoValue, setServoValue] = useState<number | null>(null);
   const [deviceName, setDeviceName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -166,10 +172,6 @@ export function useBleCounter(): UseBleCounterResult {
   const disposeSession = useCallback(async (session: BleSession | null) => {
     if (!session) return;
 
-    if (session.pollTimer) {
-      clearInterval(session.pollTimer);
-      session.pollTimer = null;
-    }
     for (const subscription of session.subscriptions.splice(0)) {
       subscription.remove();
     }
@@ -188,7 +190,7 @@ export function useBleCounter(): UseBleCounterResult {
   const connect = useCallback(async () => {
     const runId = ++runIdRef.current;
     const isStale = () => !aliveRef.current || runIdRef.current !== runId;
-    const session: BleSession = { device: null, subscriptions: [], pollTimer: null };
+    const session: BleSession = { device: null, subscriptions: [], writeValue: null };
 
     await disposeSession(sessionRef.current);
     sessionRef.current = session;
@@ -250,12 +252,7 @@ export function useBleCounter(): UseBleCounterResult {
       session.subscriptions.push(
         manager.onDeviceDisconnected(connected.id, (disconnectError) => {
           if (isStale()) return;
-          // Stop polling a link that is gone, otherwise every read fails and
-          // hides the reason the counter froze.
-          if (session.pollTimer) {
-            clearInterval(session.pollTimer);
-            session.pollTimer = null;
-          }
+          session.writeValue = null;
           session.device = null;
           setStatus('error');
           setError(
@@ -286,43 +283,17 @@ export function useBleCounter(): UseBleCounterResult {
         throw new Error('The connected device does not expose the counter characteristic.');
       }
 
-      const readCounter = async () => {
-        try {
-          const value = await ready.readCharacteristicForService(
-            serviceUuid,
-            characteristic.uuid,
-          );
-          if (isStale()) return;
-          const parsed = parseCounterValue(value.value);
-          if (parsed !== null) setCounter(parsed);
-          setError(null);
-        } catch (readError) {
-          if (isStale()) return;
-          setError(`Could not read the counter: ${toError(readError).message}`);
-        }
-      };
-
-      // The firmware only exposes READ on the counter, so polling is what keeps
-      // the value fresh. Notifications are used as well when available.
-      if (characteristic.isNotifiable || characteristic.isIndicatable) {
-        session.subscriptions.push(
-          ready.monitorCharacteristicForService(
-            serviceUuid,
-            characteristic.uuid,
-            (notificationError, notified) => {
-              if (isStale() || notificationError || !notified) return;
-              const parsed = parseCounterValue(notified.value);
-              if (parsed !== null) setCounter(parsed);
-            },
-          ),
+      // The firmware reads this characteristic with `getValue<int>()` and
+      // feeds the result to `Servo::write()`, so a write is what moves the
+      // servo. Writes with a response surface firmware side errors.
+      session.writeValue = (valueBase64) =>
+        ready.writeCharacteristicWithResponseForService(
+          serviceUuid,
+          characteristic.uuid,
+          valueBase64,
         );
-      }
-      session.pollTimer = setInterval(() => {
-        void readCounter();
-      }, POLL_INTERVAL_MS);
 
       setStatus('connected');
-      await readCounter();
     } catch (connectError) {
       await disposeSession(session);
       if (isStale()) return;
@@ -353,9 +324,26 @@ export function useBleCounter(): UseBleCounterResult {
     };
   }, [connect, disposeSession]);
 
+  const sendServoValue = useCallback(async (value: number) => {
+    if (!isValidServoValue(value)) {
+      throw new Error(
+        `Servo angles must be whole numbers between ${MIN_SERVO_VALUE} and ${MAX_SERVO_VALUE}.`,
+      );
+    }
+
+    const writeValue = sessionRef.current?.writeValue;
+    if (!writeValue) {
+      throw new Error('Not connected to the pill dispenser yet.');
+    }
+
+    await writeValue(encodeServoValue(value));
+    if (!aliveRef.current) return;
+    setServoValue(value);
+  }, []);
+
   const retry = useCallback(() => {
     void connect();
   }, [connect]);
 
-  return { status, counter, deviceName, error, retry };
+  return { status, servoValue, deviceName, error, sendServoValue, retry };
 }

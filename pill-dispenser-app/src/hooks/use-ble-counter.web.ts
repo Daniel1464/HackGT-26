@@ -7,9 +7,11 @@ import type { UseBleCounterResult } from '@/lib/ble-counter';
 export function useBleCounter(): UseBleCounterResult {
   return {
     status: 'unsupported',
-    counter: null,
+    servoValue: null,
     deviceName: null,
     error: 'Connect the pill dispenser from the iOS or Android build of this app.',
+    sendServoValue: () =>
+      Promise.reject(new Error('Bluetooth is not available in the browser.')),
     retry: () => {},
   };
 }

@@ -1,0 +1,1 @@
+Prioritize getting first implementations out, and don't interact with `git` unless to view commit history.

@@ -1,6 +1,6 @@
-import { toByteArray } from 'base64-js';
+import { fromByteArray, toByteArray } from 'base64-js';
 
-/** Lifecycle of the Bluetooth link with the ESP32 counter peripheral. */
+/** Lifecycle of the Bluetooth link with the ESP32 servo peripheral. */
 export type BleCounterStatus =
   | 'idle'
   | 'scanning'
@@ -11,8 +11,8 @@ export type BleCounterStatus =
 
 export type BleCounterState = {
   status: BleCounterStatus;
-  /** Latest counter value, or `null` while waiting for the first reading. */
-  counter: number | null;
+  /** Servo angle written to the peripheral last, or `null` before the first send. */
+  servoValue: number | null;
   /** Name the peripheral advertises, when it is known. */
   deviceName: string | null;
   /** Human readable problem description, set while `status` is `error`. */
@@ -20,9 +20,38 @@ export type BleCounterState = {
 };
 
 export type UseBleCounterResult = BleCounterState & {
+  /** Broadcasts a servo angle over the counter characteristic. */
+  sendServoValue: (value: number) => Promise<void>;
   /** Drops the current link and starts looking for the peripheral again. */
   retry: () => void;
 };
+
+/** `Servo::write()` takes the angle in whole degrees. */
+export const MIN_SERVO_VALUE = 0;
+export const MAX_SERVO_VALUE = 180;
+
+/** True for the whole degrees `Servo::write()` understands. */
+export function isValidServoValue(value: number): boolean {
+  return Number.isInteger(value) && value >= MIN_SERVO_VALUE && value <= MAX_SERVO_VALUE;
+}
+
+/**
+ * Encodes a servo angle for the counter characteristic.
+ *
+ * The firmware reads the characteristic with `getValue<int>()`, which copies
+ * `sizeof(int)` bytes as a little-endian integer, so the angle is sent as a
+ * 32 bit little-endian value rather than as text.
+ */
+export function encodeServoValue(value: number): string {
+  const bytes = new Uint8Array(SERVO_VALUE_BYTES);
+  for (let index = 0; index < SERVO_VALUE_BYTES; index += 1) {
+    bytes[index] = (value >>> (8 * index)) & 0xff;
+  }
+  return fromByteArray(bytes);
+}
+
+/** Width of `int` on the ESP32 the firmware runs on. */
+const SERVO_VALUE_BYTES = 4;
 
 /** Longest little-endian integer that still fits into a safe `number`. */
 const MAX_INTEGER_BYTES = 6;
