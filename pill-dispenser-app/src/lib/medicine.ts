@@ -4,6 +4,16 @@ export type MedicineRecord = {
   data: { time: string; dose: number }[];
 };
 
+/**
+ * Fixed demo schedule used to smoke-test the dispenser link: one 10:00 UTC dose
+ * of the Vitamin A stored in compartment 0. Times use the wire format's UTC.
+ */
+export const SAMPLE_MEDICINE: MedicineRecord = {
+  medicine: 'Vitamin A',
+  id: 0,
+  data: [{ time: '10:00 UTC', dose: 1 }],
+};
+
 export function validateMedicine(value: unknown): MedicineRecord {
   const record = value as MedicineRecord | null;
   if (!record || typeof record.medicine !== 'string' || !record.medicine.trim() ||

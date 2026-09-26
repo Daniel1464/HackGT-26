@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { MedicationAgent } from './medication-agent';
+import { SampleMedicineButton } from './sample-medicine-button';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -152,6 +153,8 @@ export function ServoWidget() {
       )}
 
       <MedicationAgent connected={isConnected} sendMedicine={sendMedicine} />
+
+      <SampleMedicineButton connected={isConnected} sendMedicine={sendMedicine} />
 
       {status === 'error' && (
         <Pressable
