@@ -7,9 +7,10 @@
 #define SERVO_TARGET_UUID    "48f7d908-c8b4-4066-a809-c67e4bdb2b86"
 #define TIME_UUID           "5a84b053-9bfe-4f27-8c2a-c4dce2bf537f"
 #define MEDICINE_UUID       "9c8b3e10-74d5-4e36-a5a1-938871102001"
+#define REMOVE_MEDICINE_UUID "d2d13576-fe66-4af5-ad40-17535cc3fd2a"
 #define DEVICE_NAME         "ESP32-PillDispenser"
 #define SERVO_PIN           13
-#define BEAM_BREAK_PIN      27
+#define BEAM_BREAK_PIN      26
 #define BEAM_BREAK_ACTIVE_LOW true
 #define A                   0.2347
 #define B                   0.051
@@ -90,6 +91,18 @@ bool writeMedicineRecord(uint8_t medicineId, const uint8_t *data, size_t length)
   return writePersistentBytes(key.c_str(), data, length);
 }
 
+/**
+ * Erase the stored record for a medicine slot, freeing it for a new medicine.
+ *
+ * Returns true when the slot is empty afterwards, including when it already was.
+ */
+bool clearMedicineRecord(uint8_t medicineId) {
+  if (medicineId > 1 || !persistentStorageReady) return false;
+  const String key = medicineStorageKey(medicineId);
+  if (!persistentStorage.isKey(key.c_str())) return true;
+  return persistentStorage.remove(key.c_str());
+}
+
 constexpr size_t MEDICINE_PACKET_BYTES = 7;
 constexpr uint32_t MEDICINE_TRANSFER_GAP_MS = 2000;
 uint32_t lastMedicinePacketAt = 0;
@@ -135,25 +148,66 @@ bool appendMedicineDosePacket(const std::string &packet) {
   return saved;
 }
 
+/** "SLOTS:xy" flag string: each digit is 1 when that medicine slot holds a record. */
+const char *medicineSlotsValue() {
+  uint8_t record[MEDICINE_DOSE_BYTES * MEDICINE_MAX_DOSES];
+  const bool id0Filled = readMedicineRecord(0, record, sizeof(record)) > 0;
+  const bool id1Filled = readMedicineRecord(1, record, sizeof(record)) > 0;
+  return id0Filled && id1Filled ? "SLOTS:11" :
+    id0Filled ? "SLOTS:10" : id1Filled ? "SLOTS:01" : "SLOTS:00";
+}
+
+constexpr size_t REMOVE_MEDICINE_PACKET_BYTES = 1;
+
+/**
+ * Remove one medicine by its ID, dropping every stored dose for that slot.
+ *
+ * Clearing the slot makes it available again to `getNextMedicineId()` on the
+ * app side.
+ */
+bool removeMedicineById(uint8_t medicineId) {
+  if (medicineId > 1 || !clearMedicineRecord(medicineId)) return false;
+  // Abandon any in-flight transfer so a stray packet cannot resurrect the slot.
+  if (medicinePacketSessionActive && activeMedicinePacketId == medicineId) {
+    medicinePacketSessionActive = false;
+  }
+  return true;
+}
+
 // Each write is one binary packet: [medicine ID:u8][minutes since midnight UTC:u16 LE][dose:u32 LE].
 class MedicineCallbacks : public NimBLECharacteristicCallbacks {
-public:
-  void onRead(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
-    uint8_t record[MEDICINE_DOSE_BYTES * MEDICINE_MAX_DOSES];
-    const bool id0Filled = readMedicineRecord(0, record, sizeof(record)) > 0;
-    const bool id1Filled = readMedicineRecord(1, record, sizeof(record)) > 0;
-    characteristic->setValue(id0Filled && id1Filled ? "SLOTS:11" :
-      id0Filled ? "SLOTS:10" : id1Filled ? "SLOTS:01" : "SLOTS:00");
-  }
+  public:
+    void onRead(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
+      characteristic->setValue(medicineSlotsValue());
+    }
 
-  void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
-    const std::string packet = characteristic->getValue();
-    const bool saved = appendMedicineDosePacket(packet);
-    characteristic->setValue(saved ? "SAVED" : "ERROR:packet");
-    Serial.println(saved ? "Medicine dose packet saved to flash" : "Invalid medicine dose packet");
-  }
+    void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
+      const std::string packet = characteristic->getValue();
+      const bool saved = appendMedicineDosePacket(packet);
+      characteristic->setValue(saved ? "SAVED" : "ERROR:packet");
+      Serial.println(saved ? "Medicine dose packet saved to flash" : "Invalid medicine dose packet");
+    }
 };
+
+// Each write is a single byte [medicine ID:u8]; it deletes that medicine's record.
+class RemoveMedicineCallbacks: public NimBLECharacteristicCallbacks {
+  public:
+    void onRead(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
+      characteristic->setValue(medicineSlotsValue());
+    }
+
+    void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
+      // The app writes a single byte [medicine ID:u8]; pass the ID straight through.
+      const std::string value = characteristic->getValue();
+      const bool removed = value.size() == REMOVE_MEDICINE_PACKET_BYTES &&
+        removeMedicineById(static_cast<uint8_t>(value[0]));
+      characteristic->setValue(removed ? "REMOVED" : "ERROR:packet");
+      Serial.println(removed ? "Medicine record removed from flash" : "Invalid remove medicine packet");
+    }
+};
+
 MedicineCallbacks medicineCallbacks;
+RemoveMedicineCallbacks removeMedicineCallbacks;
 
 uint64_t syncedUtcSeconds = 0;
 uint32_t syncedAtMillis = 0;
@@ -268,6 +322,10 @@ void setupBluetooth() {
     MEDICINE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
   medicine->setCallbacks(&medicineCallbacks);
   medicine->setValue("IDLE");
+  NimBLECharacteristic *removeMedicine = pService->createCharacteristic(
+    REMOVE_MEDICINE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+  removeMedicine->setCallbacks(&removeMedicineCallbacks);
+  removeMedicine->setValue("IDLE");
 
   pService->start();
 
@@ -321,6 +379,9 @@ void loop() {
   loopCounter++;
   bool print = loopCounter % 10 == 0;
   syncClockFromCharacteristic();
+
+  Serial.print("Beam break: ");
+  Serial.println(digitalRead(BEAM_BREAK_PIN));
 
   if (print) {
     Serial.print("Servo attached? ");
