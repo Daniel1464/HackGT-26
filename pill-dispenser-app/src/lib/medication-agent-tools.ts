@@ -46,7 +46,9 @@ const PREVIOUS_STATUS_UNAVAILABLE = 'The app and dispenser do not expose a previ
 
 export function createMedicationClientTools(options: {
   connected: boolean;
-  getNextMedicineId?: () => Promise<0 | 1>;
+  getMedicineIdForName: (medicineName: string) => Promise<0 | 1>;
+  getMedicationNames: () => Promise<Array<{ id: 0 | 1; medicineName: string }>>;
+  saveMedicineName: (medicineID: 0 | 1, medicineName: string) => Promise<void>;
   medications?: readonly MedicationIdentity[];
   sendMedicine: (record: MedicineRecord) => Promise<void>;
   removeMedicineSchedule?: (medicineID: 0 | 1) => Promise<void>;
@@ -63,23 +65,41 @@ export function createMedicationClientTools(options: {
     saveMedicationSchedule: async (parameters: unknown) => {
       try {
         if (!options.connected) throw new Error('Connect the pill dispenser before saving a schedule.');
-        const id = options.getNextMedicineId ? await options.getNextMedicineId() : undefined;
-        const record = adaptMedicationSchedule(parameters, options.medications ?? [], new Date(), id);
+        const draft = adaptMedicationSchedule(parameters, options.medications ?? [], new Date(), 0);
+        const id = await options.getMedicineIdForName(draft.medicine);
+        const record = validateMedicine({ ...draft, id });
         await options.sendMedicine(record);
+        await options.saveMedicineName(record.id, record.medicine);
         options.onSaved(record.medicine);
         return { success: true as const, medicineName: record.medicine };
       } catch (error) {
         return failure(error);
       }
     },
-    getMedicationSchedule: async () => failure(new Error(SCHEDULE_READ_UNAVAILABLE)),
+    getMedicationSchedule: async () => {
+      try {
+        return {
+          success: true as const,
+          medications: await options.getMedicationNames(),
+          scheduleDetailsAvailable: false as const,
+        };
+      } catch (error) {
+        return failure(error);
+      }
+    },
     getNextMedication: async () => failure(new Error(SCHEDULE_READ_UNAVAILABLE)),
     getPrevMedicationStatus: async () => failure(new Error(PREVIOUS_STATUS_UNAVAILABLE)),
     removeMedicineSchedule: async (parameters: unknown) => {
       try {
-        const medicineID = parameters && typeof parameters === 'object'
+        const input = parameters && typeof parameters === 'object'
           ? (parameters as Record<string, unknown>).medicineID
           : undefined;
+        const medicineName = parameters && typeof parameters === 'object'
+          ? (parameters as Record<string, unknown>).medicineName
+          : undefined;
+        const medicineID = input === undefined && typeof medicineName === 'string'
+          ? await options.getMedicineIdForName(medicineName)
+          : input;
         if (medicineID !== 0 && medicineID !== 1) throw new Error('medicineID must be exactly 0 or 1.');
         if (!options.removeMedicineSchedule) throw new Error('Removing medicine schedules is not available in this app build.');
         await options.removeMedicineSchedule(medicineID);

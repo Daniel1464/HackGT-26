@@ -12,17 +12,22 @@ const AGENT_ID = 'agent_9101m3e5mt3ne7xv0mnaxm23dwwe';
 type MedicationAgentProps = {
   connected: boolean;
   sendMedicine: (record: MedicineRecord) => Promise<void>;
-  getNextMedicineId: () => Promise<0 | 1>;
+  getMedicineIdForName: (medicineName: string) => Promise<0 | 1>;
+  getMedicationNames: () => Promise<Array<{ id: 0 | 1; medicineName: string }>>;
+  saveMedicineName: (medicineID: 0 | 1, medicineName: string) => Promise<void>;
   removeMedicineSchedule: (medicineID: number) => Promise<void>;
 };
 
 /** Live ElevenLabs conversation using the dashboard's case-sensitive tool names. */
-export function MedicationAgent({ connected, sendMedicine, getNextMedicineId, removeMedicineSchedule }: MedicationAgentProps) {
+export function MedicationAgent({ connected, sendMedicine, getMedicineIdForName, getMedicationNames, saveMedicineName, removeMedicineSchedule }: MedicationAgentProps) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [isEnding, setIsEnding] = useState(false);
   const tools = createMedicationClientTools({
     connected,
-    getNextMedicineId,
+    getMedicineIdForName,
+    getMedicationNames,
+    saveMedicineName,
     sendMedicine,
     removeMedicineSchedule,
     onSaved: (medicineName) => {
@@ -40,14 +45,24 @@ export function MedicationAgent({ connected, sendMedicine, getNextMedicineId, re
       getPrevMedicationStatus: async () => JSON.stringify(await tools.getPrevMedicationStatus()),
       removeMedicineSchedule: async (parameters) => JSON.stringify(await tools.removeMedicineSchedule(parameters)),
     },
-    onError: (message) => setError(String(message)),
+    onError: (message) => {
+      setIsEnding(false);
+      setError(String(message));
+    },
+    onDisconnect: () => setIsEnding(false),
   });
 
   const active = conversation.status === 'connected' || conversation.status === 'connecting';
   const start = () => {
+    if (isEnding) return;
     setError(null);
     setSaved(null);
     conversation.startSession({ agentId: AGENT_ID });
+  };
+  const end = () => {
+    if (isEnding) return;
+    setIsEnding(true);
+    conversation.endSession();
   };
 
   return (
@@ -63,10 +78,10 @@ export function MedicationAgent({ connected, sendMedicine, getNextMedicineId, re
       </ThemedText>
       <Pressable
         accessibilityRole="button"
-        disabled={conversation.status === 'connecting' || (!connected && !active)}
-        onPress={active ? conversation.endSession : start}
+        disabled={isEnding || conversation.status === 'connecting' || (!connected && !active)}
+        onPress={active ? end : start}
         style={({ pressed }) => [styles.button, pressed && styles.pressed, !connected && styles.disabled]}>
-        <ThemedText type="smallBold">{active ? 'End conversation' : 'Talk to assistant'}</ThemedText>
+        <ThemedText type="smallBold">{isEnding ? 'Ending…' : active ? 'End conversation' : 'Talk to assistant'}</ThemedText>
       </Pressable>
       {conversation.message && <ThemedText type="small">{conversation.message}</ThemedText>}
       {saved && <ThemedText type="small" themeColor="textSecondary">{saved}</ThemedText>}

@@ -8,7 +8,9 @@ export function useBleCounter(): UseBleCounterResult {
   return {
     status: 'unsupported',
     sendMedicine: async () => { throw new Error('Use the native app for Bluetooth transfer.'); },
-    getNextMedicineId: async () => { throw new Error('Use the native app to read medicine slots over Bluetooth.'); },
+    getMedicineIdForName: async () => { throw new Error('Use the native app to read medicine names over Bluetooth.'); },
+    getMedicationNames: async () => { throw new Error('Use the native app to read medicine names over Bluetooth.'); },
+    saveMedicineName: async () => { throw new Error('Use the native app to save medicine names over Bluetooth.'); },
     removeMedicineSchedule: async () => { throw new Error('Use the native app to remove medication over Bluetooth.'); },
     servoValue: null,
     deviceName: null,

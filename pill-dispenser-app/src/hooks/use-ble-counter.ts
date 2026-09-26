@@ -9,6 +9,7 @@ import {
   CounterServiceUUIDs,
   TimeCharacteristicUUID,
   MedicineCharacteristicUUID,
+  MedicineNameCharacteristicUUID,
   RemoveMedicineCharacteristicUUID,
 } from '@/constants/ble';
 import {
@@ -41,7 +42,9 @@ type BleSession = {
   writeValue: ((valueBase64: string) => Promise<unknown>) | null;
   timeSyncTimer: ReturnType<typeof setInterval> | null;
   sendMedicine?: (record: MedicineRecord) => Promise<void>;
-  getNextMedicineId?: () => Promise<0 | 1>;
+  getMedicineIdForName?: (medicineName: string) => Promise<0 | 1>;
+  getMedicationNames?: () => Promise<Array<{ id: 0 | 1; medicineName: string }>>;
+  saveMedicineName?: (medicineID: 0 | 1, medicineName: string) => Promise<void>;
   removeMedicineSchedule?: (medicineID: 0 | 1) => Promise<void>;
 };
 
@@ -68,6 +71,20 @@ function encodeAscii(value: string): string {
     bytes[index] = value.charCodeAt(index);
   }
   return fromByteArray(bytes);
+}
+
+function encodeUtf8(value: string): Uint8Array {
+  const escaped = encodeURIComponent(value);
+  const bytes: number[] = [];
+  for (let index = 0; index < escaped.length; index += 1) {
+    if (escaped[index] === '%') {
+      bytes.push(Number.parseInt(escaped.slice(index + 1, index + 3), 16));
+      index += 2;
+    } else {
+      bytes.push(escaped.charCodeAt(index));
+    }
+  }
+  return Uint8Array.from(bytes);
 }
 
 function advertisesCounterService(device: Device): boolean {
@@ -337,6 +354,10 @@ export function useBleCounter(): UseBleCounterResult {
         throw new Error('The connected device does not expose the medicine characteristic.');
       }
 
+      const medicineNameCharacteristic = (await ready.characteristicsForService(serviceUuid)).find(
+        (item) => normalizeUuid(item.uuid) === normalizeUuid(MedicineNameCharacteristicUUID),
+      );
+
       const readMedicineSlots = async (): Promise<[boolean, boolean]> => {
         const result = await ready.readCharacteristicForService(serviceUuid, medicineCharacteristic.uuid);
         if (!result.value) throw new Error('The dispenser returned no medicine-slot information.');
@@ -346,11 +367,55 @@ export function useBleCounter(): UseBleCounterResult {
         return [slots[1] === '1', slots[2] === '1'];
       };
 
-      session.getNextMedicineId = async () => {
+      const readMedicationNames = async (): Promise<Array<{ id: 0 | 1; medicineName: string }>> => {
+        if (!medicineNameCharacteristic) throw new Error('The dispenser does not expose its medicine-name characteristic.');
+        const result = await ready.readCharacteristicForService(serviceUuid, medicineNameCharacteristic.uuid);
+        if (!result.value) throw new Error('The dispenser returned no medicine names.');
+        const response = decodeURIComponent(
+          Array.from(toByteArray(result.value), (byte) => `%${byte.toString(16).padStart(2, '0')}`).join(''),
+        ).replace(/\0+$/, '');
+        const names: Array<{ id: 0 | 1; medicineName: string }> = [];
+        for (const entry of response.split(/,(?=[01]:)/)) {
+          const match = /^([01]):(.*)$/.exec(entry);
+          if (!match) throw new Error('The dispenser returned medicine names in an invalid format.');
+          const medicineName = match[2].trim();
+          if (!medicineName || medicineName === '__NO_MEDICINE__') continue;
+          names.push({ id: Number(match[1]) as 0 | 1, medicineName });
+        }
+        return names;
+      };
+
+      session.getMedicationNames = readMedicationNames;
+      session.getMedicineIdForName = async (medicineName) => {
+        const normalizedName = medicineName.trim().toLowerCase();
+        if (!normalizedName) throw new Error('Medicine name cannot be empty.');
+        const names = await readMedicationNames();
+        const existing = names.find(({ medicineName: storedName }) => storedName.trim().toLowerCase() === normalizedName);
+        if (existing) return existing.id;
         const slots = await readMedicineSlots();
         if (!slots[0]) return 0;
         if (!slots[1]) return 1;
-        throw new Error('Both medicine slots are already filled.');
+        throw new Error('Both medicine slots are occupied by other medicines. Remove a schedule before adding another.');
+      };
+
+      session.saveMedicineName = async (medicineID, medicineName) => {
+        if (!medicineNameCharacteristic) throw new Error('The dispenser does not support saving medicine names.');
+        if (medicineID !== 0 && medicineID !== 1) throw new Error('Medicine ID must be 0 or 1.');
+        const name = medicineName.trim();
+        const nameBytes = encodeUtf8(name);
+        if (!name || nameBytes.length > 64) throw new Error('Medicine name must contain 1–64 UTF-8 bytes.');
+        const packet = new Uint8Array(nameBytes.length + 1);
+        packet[0] = medicineID;
+        packet.set(nameBytes, 1);
+        await ready.writeCharacteristicWithResponseForService(
+          serviceUuid,
+          medicineNameCharacteristic.uuid,
+          fromByteArray(packet),
+        );
+        const storedName = (await readMedicationNames()).find(({ id }) => id === medicineID)?.medicineName;
+        if (storedName?.toLowerCase() !== name.toLowerCase()) {
+          throw new Error(`The dispenser did not confirm the name for medicine ID ${medicineID}.`);
+        }
       };
 
       const removeCharacteristic = (await ready.characteristicsForService(serviceUuid)).find(
@@ -472,10 +537,22 @@ export function useBleCounter(): UseBleCounterResult {
     await send(record);
   }, []);
 
-  const getNextMedicineId = useCallback(async (): Promise<0 | 1> => {
-    const getId = sessionRef.current?.getNextMedicineId;
-    if (!getId) throw new Error('Connect to the dispenser before assigning a medicine ID.');
-    return getId();
+  const getMedicineIdForName = useCallback(async (medicineName: string): Promise<0 | 1> => {
+    const getId = sessionRef.current?.getMedicineIdForName;
+    if (!getId) throw new Error('Connect to the dispenser before resolving a medicine name.');
+    return getId(medicineName);
+  }, []);
+
+  const getMedicationNames = useCallback(async () => {
+    const getNames = sessionRef.current?.getMedicationNames;
+    if (!getNames) throw new Error('Connect to the dispenser before reading medicine names.');
+    return getNames();
+  }, []);
+
+  const saveMedicineName = useCallback(async (medicineID: 0 | 1, medicineName: string) => {
+    const saveName = sessionRef.current?.saveMedicineName;
+    if (!saveName) throw new Error('Connect to a compatible dispenser before saving a medicine name.');
+    await saveName(medicineID, medicineName);
   }, []);
 
   const removeMedicineSchedule = useCallback(async (medicineID: number) => {
@@ -485,5 +562,17 @@ export function useBleCounter(): UseBleCounterResult {
     await remove(medicineID);
   }, []);
 
-  return { status, servoValue, deviceName, error, sendServoValue, sendMedicine, getNextMedicineId, removeMedicineSchedule, retry };
+  return {
+    status,
+    servoValue,
+    deviceName,
+    error,
+    sendServoValue,
+    sendMedicine,
+    getMedicineIdForName,
+    getMedicationNames,
+    saveMedicineName,
+    removeMedicineSchedule,
+    retry,
+  };
 }
