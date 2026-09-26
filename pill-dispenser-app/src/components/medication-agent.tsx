@@ -36,7 +36,7 @@ export function MedicationAgent({ connected, sendMedicine, getNextMedicineId, re
       // This SDK version accepts strings; preserve the structured result as JSON.
       saveMedicationSchedule: async (parameters) => JSON.stringify(await tools.saveMedicationSchedule(parameters)),
       getNextMedication: async () => JSON.stringify(await tools.getNextMedication()),
-      getMedicationData: async () => JSON.stringify(await tools.getMedicationData()),
+      getMedicationSchedule: async () => JSON.stringify(await tools.getMedicationSchedule()),
       getPrevMedicationStatus: async () => JSON.stringify(await tools.getPrevMedicationStatus()),
       removeMedicineSchedule: async (parameters) => JSON.stringify(await tools.removeMedicineSchedule(parameters)),
     },

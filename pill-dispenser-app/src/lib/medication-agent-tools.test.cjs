@@ -62,7 +62,7 @@ test('unresolved names never reach BLE; unavailable readers return failures inst
     sendMedicine: async () => assert.fail('Must not send'), onSaved: () => {}, onError: () => {} });
   assert.equal((await tools.saveMedicationSchedule(input)).success, false);
   assert.equal((await tools.getNextMedication()).success, false);
-  assert.equal((await tools.getMedicationData()).success, false);
+  assert.equal((await tools.getMedicationSchedule()).success, false);
   assert.equal((await tools.getPrevMedicationStatus()).success, false);
 });
 

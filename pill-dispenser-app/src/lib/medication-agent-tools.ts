@@ -72,7 +72,7 @@ export function createMedicationClientTools(options: {
         return failure(error);
       }
     },
-    getMedicationData: async () => failure(new Error(SCHEDULE_READ_UNAVAILABLE)),
+    getMedicationSchedule: async () => failure(new Error(SCHEDULE_READ_UNAVAILABLE)),
     getNextMedication: async () => failure(new Error(SCHEDULE_READ_UNAVAILABLE)),
     getPrevMedicationStatus: async () => failure(new Error(PREVIOUS_STATUS_UNAVAILABLE)),
     removeMedicineSchedule: async (parameters: unknown) => {
