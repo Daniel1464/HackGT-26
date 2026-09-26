@@ -35,7 +35,7 @@ const StatusLabels: Record<BleCounterStatus, string> = {
 /** Sends a servo angle to the ESP32 pill dispenser over Bluetooth Low Energy. */
 export function ServoWidget() {
   const theme = useTheme();
-  const { status, servoValue, deviceName, error, sendServoValue, sendMedicine, retry } = useBleCounter();
+  const { status, servoValue, deviceName, error, sendServoValue, sendMedicine, getNextMedicineId, retry } = useBleCounter();
   const [draft, setDraft] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -151,7 +151,7 @@ export function ServoWidget() {
         </ThemedText>
       )}
 
-      <MedicationAgent connected={isConnected} sendMedicine={sendMedicine} />
+      <MedicationAgent connected={isConnected} sendMedicine={sendMedicine} getNextMedicineId={getNextMedicineId} />
 
       {status === 'error' && (
         <Pressable

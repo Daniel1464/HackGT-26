@@ -5,24 +5,23 @@ import { useConversation } from '@elevenlabs/react-native';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { type MedicineRecord } from '@/lib/medicine';
-import { createMedicationClientTools, type MedicationIdentity } from '@/lib/medication-agent-tools';
+import { createMedicationClientTools } from '@/lib/medication-agent-tools';
 
 const AGENT_ID = 'agent_9101m3e5mt3ne7xv0mnaxm23dwwe';
 
 type MedicationAgentProps = {
   connected: boolean;
   sendMedicine: (record: MedicineRecord) => Promise<void>;
-  /** Must come from configured compartment assignments, never inferred by the agent. */
-  medications?: readonly MedicationIdentity[];
+  getNextMedicineId: () => Promise<0 | 1>;
 };
 
 /** Live ElevenLabs conversation using the dashboard's case-sensitive tool names. */
-export function MedicationAgent({ connected, sendMedicine, medications = [] }: MedicationAgentProps) {
+export function MedicationAgent({ connected, sendMedicine, getNextMedicineId }: MedicationAgentProps) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const tools = createMedicationClientTools({
     connected,
-    medications,
+    getNextMedicineId,
     sendMedicine,
     onSaved: (medicineName) => {
       setError(null);

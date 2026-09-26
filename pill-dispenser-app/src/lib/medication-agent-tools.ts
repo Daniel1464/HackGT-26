@@ -7,6 +7,7 @@ export function adaptMedicationSchedule(
   parameters: unknown,
   medications: readonly MedicationIdentity[],
   now = new Date(),
+  assignedId?: 0 | 1,
 ): MedicineRecord {
   if (!parameters || typeof parameters !== 'object') throw new Error('Expected medication parameters.');
   const { medicineName, doses } = parameters as Record<string, unknown>;
@@ -32,17 +33,20 @@ export function adaptMedicationSchedule(
     return { time: `${String(local.getUTCHours()).padStart(2, '0')}:${String(local.getUTCMinutes()).padStart(2, '0')} UTC`, dose: quantity };
   });
   const matches = medications.filter(({ medicine }) => medicine.trim().toLowerCase() === medicineName.trim().toLowerCase());
-  if (matches.length !== 1 || medications.some((item) => item.id === matches[0]?.id && item !== matches[0])) {
-    throw new Error(`Cannot uniquely resolve medication "${medicineName.trim()}" to a configured medication ID.`);
+  if (matches.length === 1) return validateMedicine({ medicine: matches[0].medicine, id: matches[0].id, data });
+  if (matches.length > 1) throw new Error(`Medication "${medicineName.trim()}" has multiple configured IDs.`);
+  if (assignedId === 0 || assignedId === 1) {
+    return validateMedicine({ medicine: medicineName.trim(), id: assignedId, data });
   }
-  return validateMedicine({ medicine: matches[0].medicine, id: matches[0].id, data });
+  throw new Error(`Cannot resolve medication "${medicineName.trim()}" to a configured ID.`);
 }
 
 const SCHEDULE_UNAVAILABLE = 'Medication schedules are stored on the dispenser, but the app has no retained schedule store or BLE schedule readback. The current schedule is unavailable.';
 
 export function createMedicationClientTools(options: {
   connected: boolean;
-  medications: readonly MedicationIdentity[];
+  getNextMedicineId?: () => Promise<0 | 1>;
+  medications?: readonly MedicationIdentity[];
   sendMedicine: (record: MedicineRecord) => Promise<void>;
   onSaved: (medicineName: string) => void;
   onError: (message: string) => void;
@@ -56,8 +60,9 @@ export function createMedicationClientTools(options: {
   return {
     saveMedicationSchedule: async (parameters: unknown) => {
       try {
-        const record = adaptMedicationSchedule(parameters, options.medications);
         if (!options.connected) throw new Error('Connect the pill dispenser before saving a schedule.');
+        const id = options.getNextMedicineId ? await options.getNextMedicineId() : undefined;
+        const record = adaptMedicationSchedule(parameters, options.medications ?? [], new Date(), id);
         await options.sendMedicine(record);
         options.onSaved(record.medicine);
         return { success: true as const, medicineName: record.medicine };

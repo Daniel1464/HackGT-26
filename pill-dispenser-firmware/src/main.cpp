@@ -137,6 +137,14 @@ bool appendMedicineDosePacket(const std::string &packet) {
 // Each write is one binary packet: [medicine ID:u8][minutes since midnight UTC:u16 LE][dose:u32 LE].
 class MedicineCallbacks : public NimBLECharacteristicCallbacks {
 public:
+  void onRead(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
+    uint8_t record[MEDICINE_DOSE_BYTES * MEDICINE_MAX_DOSES];
+    const bool id0Filled = readMedicineRecord(0, record, sizeof(record)) > 0;
+    const bool id1Filled = readMedicineRecord(1, record, sizeof(record)) > 0;
+    characteristic->setValue(id0Filled && id1Filled ? "SLOTS:11" :
+      id0Filled ? "SLOTS:10" : id1Filled ? "SLOTS:01" : "SLOTS:00");
+  }
+
   void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
     const std::string packet = characteristic->getValue();
     const bool saved = appendMedicineDosePacket(packet);

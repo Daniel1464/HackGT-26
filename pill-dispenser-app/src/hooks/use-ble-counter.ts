@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fromByteArray } from 'base64-js';
+import { fromByteArray, toByteArray } from 'base64-js';
 import { medicineDosePacket, type MedicineRecord } from '@/lib/medicine';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { BleManager, State, type Device, type Subscription } from 'react-native-ble-plx';
@@ -40,6 +40,7 @@ type BleSession = {
   writeValue: ((valueBase64: string) => Promise<unknown>) | null;
   timeSyncTimer: ReturnType<typeof setInterval> | null;
   sendMedicine?: (record: MedicineRecord) => Promise<void>;
+  getNextMedicineId?: () => Promise<0 | 1>;
 };
 
 function normalizeUuid(uuid: string): string {
@@ -327,6 +328,24 @@ export function useBleCounter(): UseBleCounterResult {
         throw new Error('The connected device does not expose the time characteristic.');
       }
 
+      const medicineCharacteristic = (await ready.characteristicsForService(serviceUuid)).find(
+        (item) => normalizeUuid(item.uuid) === normalizeUuid(MedicineCharacteristicUUID),
+      );
+      if (!medicineCharacteristic) {
+        throw new Error('The connected device does not expose the medicine characteristic.');
+      }
+
+      session.getNextMedicineId = async () => {
+        const result = await ready.readCharacteristicForService(serviceUuid, medicineCharacteristic.uuid);
+        if (!result.value) throw new Error('The dispenser returned no medicine-slot information.');
+        const response = Array.from(toByteArray(result.value), (byte) => String.fromCharCode(byte)).join('');
+        const slots = /^SLOTS:([01])([01])$/.exec(response);
+        if (!slots) throw new Error('Could not read medicine slots from the dispenser. Update its firmware and reconnect.');
+        if (slots[1] === '0') return 0;
+        if (slots[2] === '0') return 1;
+        throw new Error('Both medicine slots are already filled.');
+      };
+
       // The firmware reads this characteristic with `getValue<int>()` and
       // feeds the result to `Servo::write()`, so a write is what moves the
       // servo. Writes with a response surface firmware side errors.
@@ -429,5 +448,11 @@ export function useBleCounter(): UseBleCounterResult {
     await send(record);
   }, []);
 
-  return { status, servoValue, deviceName, error, sendServoValue, sendMedicine, retry };
+  const getNextMedicineId = useCallback(async (): Promise<0 | 1> => {
+    const getId = sessionRef.current?.getNextMedicineId;
+    if (!getId) throw new Error('Connect to the dispenser before assigning a medicine ID.');
+    return getId();
+  }, []);
+
+  return { status, servoValue, deviceName, error, sendServoValue, sendMedicine, getNextMedicineId, retry };
 }
