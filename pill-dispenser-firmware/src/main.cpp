@@ -45,6 +45,7 @@ bool writePersistentBytes(const char *key, const uint8_t *data, size_t length) {
 /** Read raw bytes from key into buffer, returning the number of bytes read. */
 size_t readPersistentBytes(const char *key, uint8_t *buffer, size_t capacity) {
   if (!persistentStorageReady || key == nullptr || buffer == nullptr) return 0;
+  if (!persistentStorage.isKey(key)) return 0;
   const size_t length = persistentStorage.getBytesLength(key);
   if (length == 0 || length > capacity) return 0;
   return persistentStorage.getBytes(key, buffer, length);
@@ -58,7 +59,7 @@ bool writePersistentInt(const char *key, int32_t value) {
 
 /** Read a signed 32-bit integer, returning defaultValue when the key is absent. */
 int32_t readPersistentInt(const char *key, int32_t defaultValue = 0) {
-  if (!persistentStorageReady || key == nullptr) return defaultValue;
+  if (!persistentStorageReady || key == nullptr || !persistentStorage.isKey(key)) return defaultValue;
   return persistentStorage.getInt(key, defaultValue);
 }
 
