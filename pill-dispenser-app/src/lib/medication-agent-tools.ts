@@ -41,13 +41,15 @@ export function adaptMedicationSchedule(
   throw new Error(`Cannot resolve medication "${medicineName.trim()}" to a configured ID.`);
 }
 
-const SCHEDULE_UNAVAILABLE = 'Medication schedules are stored on the dispenser, but the app has no retained schedule store or BLE schedule readback. The current schedule is unavailable.';
+const SCHEDULE_READ_UNAVAILABLE = 'The dispenser stores dose packets, but its BLE interface does not expose schedule contents or medicine names.';
+const PREVIOUS_STATUS_UNAVAILABLE = 'The app and dispenser do not expose a previous dispense event or confirmation status.';
 
 export function createMedicationClientTools(options: {
   connected: boolean;
   getNextMedicineId?: () => Promise<0 | 1>;
   medications?: readonly MedicationIdentity[];
   sendMedicine: (record: MedicineRecord) => Promise<void>;
+  removeMedicineSchedule?: (medicineID: 0 | 1) => Promise<void>;
   onSaved: (medicineName: string) => void;
   onError: (message: string) => void;
 }) {
@@ -70,8 +72,25 @@ export function createMedicationClientTools(options: {
         return failure(error);
       }
     },
-    // Unknown schedules must not be reported as an empty schedule or no upcoming dose.
-    getNextMedication: async () => failure(new Error(SCHEDULE_UNAVAILABLE)),
-    getMedicationSchedule: async () => failure(new Error(SCHEDULE_UNAVAILABLE)),
+    getMedicationData: async () => failure(new Error(SCHEDULE_READ_UNAVAILABLE)),
+    getNextMedication: async () => failure(new Error(SCHEDULE_READ_UNAVAILABLE)),
+    getPrevMedicationStatus: async () => failure(new Error(PREVIOUS_STATUS_UNAVAILABLE)),
+    removeMedicineSchedule: async (parameters: unknown) => {
+      try {
+        const medicineID = parameters && typeof parameters === 'object'
+          ? (parameters as Record<string, unknown>).medicineID
+          : undefined;
+        if (medicineID !== 0 && medicineID !== 1) throw new Error('medicineID must be exactly 0 or 1.');
+        if (!options.removeMedicineSchedule) throw new Error('Removing medicine schedules is not available in this app build.');
+        await options.removeMedicineSchedule(medicineID);
+        return {
+          success: true as const,
+          medicineId: medicineID,
+          message: 'Medication schedule removed successfully.',
+        };
+      } catch (error) {
+        return failure(error);
+      }
+    },
   };
 }

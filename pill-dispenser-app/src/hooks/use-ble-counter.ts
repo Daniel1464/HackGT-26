@@ -9,6 +9,7 @@ import {
   CounterServiceUUIDs,
   TimeCharacteristicUUID,
   MedicineCharacteristicUUID,
+  RemoveMedicineCharacteristicUUID,
 } from '@/constants/ble';
 import {
   encodeServoValue,
@@ -41,6 +42,7 @@ type BleSession = {
   timeSyncTimer: ReturnType<typeof setInterval> | null;
   sendMedicine?: (record: MedicineRecord) => Promise<void>;
   getNextMedicineId?: () => Promise<0 | 1>;
+  removeMedicineSchedule?: (medicineID: 0 | 1) => Promise<void>;
 };
 
 function normalizeUuid(uuid: string): string {
@@ -335,15 +337,37 @@ export function useBleCounter(): UseBleCounterResult {
         throw new Error('The connected device does not expose the medicine characteristic.');
       }
 
-      session.getNextMedicineId = async () => {
+      const readMedicineSlots = async (): Promise<[boolean, boolean]> => {
         const result = await ready.readCharacteristicForService(serviceUuid, medicineCharacteristic.uuid);
         if (!result.value) throw new Error('The dispenser returned no medicine-slot information.');
         const response = Array.from(toByteArray(result.value), (byte) => String.fromCharCode(byte)).join('');
         const slots = /^SLOTS:([01])([01])$/.exec(response);
         if (!slots) throw new Error('Could not read medicine slots from the dispenser. Update its firmware and reconnect.');
-        if (slots[1] === '0') return 0;
-        if (slots[2] === '0') return 1;
+        return [slots[1] === '1', slots[2] === '1'];
+      };
+
+      session.getNextMedicineId = async () => {
+        const slots = await readMedicineSlots();
+        if (!slots[0]) return 0;
+        if (!slots[1]) return 1;
         throw new Error('Both medicine slots are already filled.');
+      };
+
+      const removeCharacteristic = (await ready.characteristicsForService(serviceUuid)).find(
+        (item) => normalizeUuid(item.uuid) === normalizeUuid(RemoveMedicineCharacteristicUUID),
+      );
+      session.removeMedicineSchedule = async (medicineID) => {
+        if (medicineID !== 0 && medicineID !== 1) throw new Error('medicineID must be 0 or 1.');
+        if (!removeCharacteristic) throw new Error('The connected dispenser does not support removing medication schedules.');
+        const slots = await readMedicineSlots();
+        if (!slots[medicineID]) throw new Error(`Medication slot ${medicineID} is empty.`);
+        await ready.writeCharacteristicWithResponseForService(
+          serviceUuid,
+          removeCharacteristic.uuid,
+          fromByteArray(Uint8Array.of(medicineID)),
+        );
+        const slotsAfterRemoval = await readMedicineSlots();
+        if (slotsAfterRemoval[medicineID]) throw new Error(`Medication slot ${medicineID} could not be cleared.`);
       };
 
       // The firmware reads this characteristic with `getValue<int>()` and
@@ -454,5 +478,12 @@ export function useBleCounter(): UseBleCounterResult {
     return getId();
   }, []);
 
-  return { status, servoValue, deviceName, error, sendServoValue, sendMedicine, getNextMedicineId, retry };
+  const removeMedicineSchedule = useCallback(async (medicineID: number) => {
+    if (medicineID !== 0 && medicineID !== 1) throw new Error('medicineID must be 0 or 1.');
+    const remove = sessionRef.current?.removeMedicineSchedule;
+    if (!remove) throw new Error('Connect to a compatible dispenser before removing a schedule.');
+    await remove(medicineID);
+  }, []);
+
+  return { status, servoValue, deviceName, error, sendServoValue, sendMedicine, getNextMedicineId, removeMedicineSchedule, retry };
 }

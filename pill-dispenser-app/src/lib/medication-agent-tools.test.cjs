@@ -37,7 +37,7 @@ test('rejects invalid inputs, unknown names, ambiguous identities and firmware o
     assert.throws(() => adaptMedicationSchedule(value, medications));
   }
   assert.throws(() => adaptMedicationSchedule(input, []), /resolve/);
-  assert.throws(() => adaptMedicationSchedule(input, [...medications, ...medications]), /resolve/);
+  assert.throws(() => adaptMedicationSchedule(input, [...medications, ...medications]), /multiple configured IDs/);
 });
 
 test('save only reports success after BLE completes; failures stay structured', async () => {
@@ -57,10 +57,23 @@ test('save only reports success after BLE completes; failures stay structured', 
   assert.equal((await createMedicationClientTools({ ...options, connected: false }).saveMedicationSchedule(input)).success, false);
 });
 
-test('unresolved names never reach BLE; missing storage is not reported as an empty schedule', async () => {
+test('unresolved names never reach BLE; unavailable readers return failures instead of fabricated data', async () => {
   const tools = createMedicationClientTools({ connected: true, medications: [],
     sendMedicine: async () => assert.fail('Must not send'), onSaved: () => {}, onError: () => {} });
   assert.equal((await tools.saveMedicationSchedule(input)).success, false);
   assert.equal((await tools.getNextMedication()).success, false);
-  assert.equal((await tools.getMedicationSchedule()).success, false);
+  assert.equal((await tools.getMedicationData()).success, false);
+  assert.equal((await tools.getPrevMedicationStatus()).success, false);
+});
+
+test('remove validates the exact medicineID parameter and reports success only after deletion', async () => {
+  let removed;
+  const tools = createMedicationClientTools({ connected: true, medications, sendMedicine: async () => {},
+    removeMedicineSchedule: async (medicineID) => { removed = medicineID; }, onSaved: () => {}, onError: () => {} });
+  assert.equal((await tools.removeMedicineSchedule({ medicineID: 2 })).success, false);
+  assert.equal(removed, undefined);
+  assert.deepEqual(await tools.removeMedicineSchedule({ medicineID: 0 }), {
+    success: true, medicineId: 0, message: 'Medication schedule removed successfully.',
+  });
+  assert.equal(removed, 0);
 });

@@ -23,6 +23,7 @@ export type BleCounterState = {
 export type UseBleCounterResult = BleCounterState & {
   sendMedicine: (record: MedicineRecord) => Promise<void>;
   getNextMedicineId: () => Promise<0 | 1>;
+  removeMedicineSchedule: (medicineID: number) => Promise<void>;
   /** Broadcasts a servo angle over the counter characteristic. */
   sendServoValue: (value: number) => Promise<void>;
   /** Drops the current link and starts looking for the peripheral again. */

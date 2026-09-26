@@ -13,16 +13,18 @@ type MedicationAgentProps = {
   connected: boolean;
   sendMedicine: (record: MedicineRecord) => Promise<void>;
   getNextMedicineId: () => Promise<0 | 1>;
+  removeMedicineSchedule: (medicineID: number) => Promise<void>;
 };
 
 /** Live ElevenLabs conversation using the dashboard's case-sensitive tool names. */
-export function MedicationAgent({ connected, sendMedicine, getNextMedicineId }: MedicationAgentProps) {
+export function MedicationAgent({ connected, sendMedicine, getNextMedicineId, removeMedicineSchedule }: MedicationAgentProps) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const tools = createMedicationClientTools({
     connected,
     getNextMedicineId,
     sendMedicine,
+    removeMedicineSchedule,
     onSaved: (medicineName) => {
       setError(null);
       setSaved(`${medicineName} schedule sent to dispenser.`);
@@ -34,7 +36,9 @@ export function MedicationAgent({ connected, sendMedicine, getNextMedicineId }: 
       // This SDK version accepts strings; preserve the structured result as JSON.
       saveMedicationSchedule: async (parameters) => JSON.stringify(await tools.saveMedicationSchedule(parameters)),
       getNextMedication: async () => JSON.stringify(await tools.getNextMedication()),
-      getMedicationSchedule: async () => JSON.stringify(await tools.getMedicationSchedule()),
+      getMedicationData: async () => JSON.stringify(await tools.getMedicationData()),
+      getPrevMedicationStatus: async () => JSON.stringify(await tools.getPrevMedicationStatus()),
+      removeMedicineSchedule: async (parameters) => JSON.stringify(await tools.removeMedicineSchedule(parameters)),
     },
     onError: (message) => setError(String(message)),
   });
