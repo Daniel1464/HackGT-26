@@ -7,6 +7,7 @@
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define SERVO_TARGET_UUID    "48f7d908-c8b4-4066-a809-c67e4bdb2b86"
 #define TIME_UUID           "5a84b053-9bfe-4f27-8c2a-c4dce2bf537f"
+#define MEDICINE_UUID       "9c8b3e10-74d5-4e36-a5a1-938871102001"
 #define DEVICE_NAME         "ESP32-PillDispenser"
 #define SERVO_PIN           13
 #define BEAM_BREAK_PIN      27
@@ -81,14 +82,20 @@ String medicineStorageKey(uint8_t medicineId) {
 
 bool isValidMedicineRecord(JsonDocument &document, uint8_t expectedId) {
   if (!document["medicine"].is<const char *>()) return false;
+  if (strlen(document["medicine"].as<const char *>()) == 0) return false;
   if (!document["id"].is<int>() || document["id"].as<int>() != expectedId) return false;
 
   JsonArray data = document["data"].as<JsonArray>();
-  if (data.isNull()) return false;
+  if (data.isNull() || data.size() == 0 || data.size() > 32) return false;
 
   for (JsonObject dose : data) {
     if (!dose["time"].is<const char *>()) return false;
-    if (!dose["dose"].is<int>() || dose["dose"].as<int>() < 0) return false;
+    const std::string time = dose["time"].as<const char *>();
+    if (time.size() != 9 || time[2] != ':' || time.substr(5) != " UTC" ||
+        time[0] < '0' || time[0] > '2' || time[1] < '0' || time[1] > '9' ||
+        (time[0] == '2' && time[1] > '3') || time[3] < '0' || time[3] > '5' ||
+        time[4] < '0' || time[4] > '9') return false;
+    if (!dose["dose"].is<int>() || dose["dose"].as<int>() <= 0) return false;
   }
   return true;
 }
@@ -100,6 +107,7 @@ bool isValidMedicineRecord(JsonDocument &document, uint8_t expectedId) {
  * fetched independently. The JSON is normalized before it is written.
  */
 bool writeMedicineJson(const std::string &json) {
+  if (json.empty() || json.size() > 4096) return false;
   JsonDocument document;
   const DeserializationError error = deserializeJson(document, json.c_str());
   if (error) {
@@ -126,6 +134,70 @@ std::string readMedicineJson(uint8_t medicineId) {
   const String key = medicineStorageKey(medicineId);
   return readPersistentString(key.c_str(), "");
 }
+
+constexpr size_t MEDICINE_PACKET_BYTES = 7;
+constexpr uint32_t MEDICINE_TRANSFER_GAP_MS = 2000;
+uint32_t lastMedicinePacketAt = 0;
+uint8_t activeMedicinePacketId = 0;
+bool medicinePacketSessionActive = false;
+
+bool appendMedicineDosePacket(const std::string &packet) {
+  if (packet.size() != MEDICINE_PACKET_BYTES) return false;
+  const uint8_t medicineId = static_cast<uint8_t>(packet[0]);
+  const uint16_t minutes = static_cast<uint8_t>(packet[1]) |
+    (static_cast<uint16_t>(static_cast<uint8_t>(packet[2])) << 8);
+  const uint32_t dose = static_cast<uint8_t>(packet[3]) |
+    (static_cast<uint32_t>(static_cast<uint8_t>(packet[4])) << 8) |
+    (static_cast<uint32_t>(static_cast<uint8_t>(packet[5])) << 16) |
+    (static_cast<uint32_t>(static_cast<uint8_t>(packet[6])) << 24);
+  if (medicineId > 1 || minutes >= 24 * 60 || dose == 0 || dose > INT32_MAX) return false;
+
+  const uint32_t now = millis();
+  const bool newTransfer = !medicinePacketSessionActive || activeMedicinePacketId != medicineId ||
+    static_cast<uint32_t>(now - lastMedicinePacketAt) > MEDICINE_TRANSFER_GAP_MS;
+  JsonDocument document;
+  if (!newTransfer) {
+    const std::string stored = readMedicineJson(medicineId);
+    if (deserializeJson(document, stored.c_str())) return false;
+  } else {
+    const std::string stored = readMedicineJson(medicineId);
+    if (stored.empty() || deserializeJson(document, stored.c_str())) {
+      document["medicine"] = String("Medicine ") + String(medicineId);
+      document["id"] = medicineId;
+      document["data"].to<JsonArray>();
+    }
+    document["data"].to<JsonArray>().clear();
+  }
+
+  char timeText[10];
+  snprintf(timeText, sizeof(timeText), "%02u:%02u UTC", minutes / 60, minutes % 60);
+  JsonArray data = document["data"].as<JsonArray>();
+  JsonObject entry = data.add<JsonObject>();
+  entry["time"] = timeText;
+  entry["dose"] = dose;
+
+  String normalized;
+  serializeJson(document, normalized);
+  const bool saved = writeMedicineJson(std::string(normalized.c_str()));
+  if (saved) {
+    activeMedicinePacketId = medicineId;
+    lastMedicinePacketAt = now;
+    medicinePacketSessionActive = true;
+  }
+  return saved;
+}
+
+// Each write is one binary packet: [medicine ID:u8][minutes since midnight UTC:u16 LE][dose:u32 LE].
+class MedicineCallbacks : public NimBLECharacteristicCallbacks {
+public:
+  void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
+    const std::string packet = characteristic->getValue();
+    const bool saved = appendMedicineDosePacket(packet);
+    characteristic->setValue(saved ? "SAVED" : "ERROR:packet");
+    Serial.println(saved ? "Medicine dose packet saved to flash" : "Invalid medicine dose packet");
+  }
+};
+MedicineCallbacks medicineCallbacks;
 
 uint64_t syncedUtcSeconds = 0;
 uint32_t syncedAtMillis = 0;
@@ -178,6 +250,10 @@ void setupBluetooth() {
   );
   servoTarget->setValue("0");
   timeCharacteristic->setValue("0");
+  NimBLECharacteristic *medicine = pService->createCharacteristic(
+    MEDICINE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+  medicine->setCallbacks(&medicineCallbacks);
+  medicine->setValue("IDLE");
 
   pService->start();
 

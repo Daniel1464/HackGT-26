@@ -1,4 +1,5 @@
 import { fromByteArray, toByteArray } from 'base64-js';
+import type { MedicineRecord } from './medicine';
 
 /** Lifecycle of the Bluetooth link with the ESP32 servo peripheral. */
 export type BleCounterStatus =
@@ -20,6 +21,7 @@ export type BleCounterState = {
 };
 
 export type UseBleCounterResult = BleCounterState & {
+  sendMedicine: (record: MedicineRecord) => Promise<void>;
   /** Broadcasts a servo angle over the counter characteristic. */
   sendServoValue: (value: number) => Promise<void>;
   /** Drops the current link and starts looking for the peripheral again. */

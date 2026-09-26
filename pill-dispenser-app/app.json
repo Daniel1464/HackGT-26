@@ -30,6 +30,7 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      ["expo-audio", { "microphonePermission": "Allow recording medicine schedules for transcription.", "enableBackgroundPlayback": false }],
       "expo-router",
       [
         "expo-splash-screen",

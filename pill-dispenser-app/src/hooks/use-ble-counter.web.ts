@@ -7,6 +7,7 @@ import type { UseBleCounterResult } from '@/lib/ble-counter';
 export function useBleCounter(): UseBleCounterResult {
   return {
     status: 'unsupported',
+    sendMedicine: async () => { throw new Error('Use the native app for Bluetooth transfer.'); },
     servoValue: null,
     deviceName: null,
     error: 'Connect the pill dispenser from the iOS or Android build of this app.',

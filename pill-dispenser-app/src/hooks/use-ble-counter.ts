@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fromByteArray } from 'base64-js';
+import { medicineDosePacket, type MedicineRecord } from '@/lib/medicine';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { BleManager, State, type Device, type Subscription } from 'react-native-ble-plx';
 
@@ -7,6 +8,7 @@ import {
   CounterCharacteristicUUID,
   CounterServiceUUIDs,
   TimeCharacteristicUUID,
+  MedicineCharacteristicUUID,
 } from '@/constants/ble';
 import {
   encodeServoValue,
@@ -37,6 +39,7 @@ type BleSession = {
   /** Writes a Base64 encoded servo angle to the connected peripheral. */
   writeValue: ((valueBase64: string) => Promise<unknown>) | null;
   timeSyncTimer: ReturnType<typeof setInterval> | null;
+  sendMedicine?: (record: MedicineRecord) => Promise<void>;
 };
 
 function normalizeUuid(uuid: string): string {
@@ -191,6 +194,8 @@ export function useBleCounter(): UseBleCounterResult {
 
   const disposeSession = useCallback(async (session: BleSession | null) => {
     if (!session) return;
+    session.sendMedicine = undefined;
+    session.writeValue = null;
 
     if (session.timeSyncTimer) {
       clearInterval(session.timeSyncTimer);
@@ -282,6 +287,9 @@ export function useBleCounter(): UseBleCounterResult {
         manager.onDeviceDisconnected(connected.id, (disconnectError) => {
           if (isStale()) return;
           session.writeValue = null;
+          session.sendMedicine = undefined;
+          if (session.timeSyncTimer) clearInterval(session.timeSyncTimer);
+          session.timeSyncTimer = null;
           session.device = null;
           setStatus('error');
           setError(
@@ -339,6 +347,23 @@ export function useBleCounter(): UseBleCounterResult {
       };
 
       await syncUtcTime();
+      if (isStale() || !session.device) return;
+      let sendingMedicine = false;
+      session.sendMedicine = async (record) => {
+        if (sendingMedicine) throw new Error('A medicine transfer is already running.');
+        sendingMedicine = true;
+        try {
+          for (const entry of record.data) {
+            if (isStale() || !session.device) throw new Error('Bluetooth disconnected.');
+            const packet = medicineDosePacket(record, entry);
+            await ready.writeCharacteristicWithResponseForService(
+              serviceUuid,
+              MedicineCharacteristicUUID,
+              fromByteArray(new Uint8Array(packet)),
+            );
+          }
+        } finally { sendingMedicine = false; }
+      };
       session.timeSyncTimer = setInterval(() => {
         void syncUtcTime().catch((syncError: unknown) => {
           if (isStale()) return;
@@ -398,5 +423,11 @@ export function useBleCounter(): UseBleCounterResult {
     void connect();
   }, [connect]);
 
-  return { status, servoValue, deviceName, error, sendServoValue, retry };
+  const sendMedicine = useCallback(async (record: MedicineRecord) => {
+    const send = sessionRef.current?.sendMedicine;
+    if (!send) throw new Error('Connect to the dispenser before sending.');
+    await send(record);
+  }, []);
+
+  return { status, servoValue, deviceName, error, sendServoValue, sendMedicine, retry };
 }

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { VoiceMedicine } from './voice-medicine';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -34,7 +35,7 @@ const StatusLabels: Record<BleCounterStatus, string> = {
 /** Sends a servo angle to the ESP32 pill dispenser over Bluetooth Low Energy. */
 export function ServoWidget() {
   const theme = useTheme();
-  const { status, servoValue, deviceName, error, sendServoValue, retry } = useBleCounter();
+  const { status, servoValue, deviceName, error, sendServoValue, sendMedicine, retry } = useBleCounter();
   const [draft, setDraft] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -149,6 +150,8 @@ export function ServoWidget() {
           {feedback}
         </ThemedText>
       )}
+
+      <VoiceMedicine connected={isConnected} sendMedicine={sendMedicine} />
 
       {status === 'error' && (
         <Pressable
