@@ -42,6 +42,29 @@ void setupBluetooth() {
   Serial.println("Advertising started! Check your phone.");
 }
 
+int state = 0;
+bool stopped = true;
+
+void servoActionInit() {
+  stopped = false;
+  state = 0;  
+}
+
+bool servoActionLoop() {
+  if (false || servo.read() > 170) { // TODO beam break check
+    stopped = true;
+  } else if (state == 0) {
+    myServo.write(myServo.read() + 30);
+    state = 1;
+  } else if (state == 1) {
+    myServo.write(myServo.read() - 15);
+    state = 0;
+  } else {
+    servoActionInit();
+  }
+  return stopped;
+}
+
 void setup() {
   Serial.begin(115200);
   ESP32PWM::allocateTimer(0);
