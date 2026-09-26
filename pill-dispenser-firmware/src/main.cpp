@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <ESP32Servo.h>
 #include <Preferences.h>
 #include "NimBLEDevice.h"
@@ -72,6 +73,58 @@ bool writePersistentInt(const char *key, int32_t value) {
 int32_t readPersistentInt(const char *key, int32_t defaultValue = 0) {
   if (!persistentStorageReady || key == nullptr) return defaultValue;
   return persistentStorage.getInt(key, defaultValue);
+}
+
+String medicineStorageKey(uint8_t medicineId) {
+  return String("medicine") + String(medicineId);
+}
+
+bool isValidMedicineRecord(JsonDocument &document, uint8_t expectedId) {
+  if (!document["medicine"].is<const char *>()) return false;
+  if (!document["id"].is<int>() || document["id"].as<int>() != expectedId) return false;
+
+  JsonArray data = document["data"].as<JsonArray>();
+  if (data.isNull()) return false;
+
+  for (JsonObject dose : data) {
+    if (!dose["time"].is<const char *>()) return false;
+    if (!dose["dose"].is<int>() || dose["dose"].as<int>() < 0) return false;
+  }
+  return true;
+}
+
+/**
+ * Validate and persist one medicine record.
+ *
+ * Records are stored separately by ID, so medicine 0 and medicine 1 can be
+ * fetched independently. The JSON is normalized before it is written.
+ */
+bool writeMedicineJson(const std::string &json) {
+  JsonDocument document;
+  const DeserializationError error = deserializeJson(document, json.c_str());
+  if (error) {
+    Serial.print("Invalid medicine JSON: ");
+    Serial.println(error.c_str());
+    return false;
+  }
+
+  if (!document["id"].is<int>()) return false;
+  const int rawId = document["id"].as<int>();
+  if (rawId < 0 || rawId > 1 || !isValidMedicineRecord(document, static_cast<uint8_t>(rawId))) {
+    return false;
+  }
+
+  String normalized;
+  serializeJson(document, normalized);
+  const String key = medicineStorageKey(static_cast<uint8_t>(rawId));
+  return writePersistentString(key.c_str(), std::string(normalized.c_str()));
+}
+
+/** Fetch a stored medicine record by ID, or an empty string if absent/invalid. */
+std::string readMedicineJson(uint8_t medicineId) {
+  if (medicineId > 1) return "";
+  const String key = medicineStorageKey(medicineId);
+  return readPersistentString(key.c_str(), "");
 }
 
 uint64_t syncedUtcSeconds = 0;
