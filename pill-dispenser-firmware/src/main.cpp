@@ -8,6 +8,8 @@
 #define TIME_UUID           "5a84b053-9bfe-4f27-8c2a-c4dce2bf537f"
 #define DEVICE_NAME         "ESP32-PillDispenser"
 #define SERVO_PIN           13
+#define BEAM_BREAK_PIN      27
+#define BEAM_BREAK_ACTIVE_LOW true
 #define A                   0.2347
 #define B                   0.051
 
@@ -18,6 +20,25 @@ NimBLECharacteristic *servoTarget;
 NimBLECharacteristic *timeCharacteristic;
 Preferences persistentStorage;
 bool persistentStorageReady = false;
+bool beamBreakStateKnown = false;
+bool lastBeamBreakState = false;
+
+/** Returns true when the beam-break sensor reports an object in the beam. */
+bool isBeamBroken() {
+  const int sensorLevel = digitalRead(BEAM_BREAK_PIN);
+  return BEAM_BREAK_ACTIVE_LOW ? sensorLevel == LOW : sensorLevel == HIGH;
+}
+
+/** Print only on beam state transitions so the Serial monitor stays readable. */
+void reportBeamBreakState() {
+  const bool beamBroken = isBeamBroken();
+  if (beamBreakStateKnown && beamBroken == lastBeamBreakState) return;
+
+  beamBreakStateKnown = true;
+  lastBeamBreakState = beamBroken;
+  Serial.print("Beam break: ");
+  Serial.println(beamBroken ? "DETECTED" : "CLEAR");
+}
 
 /**
  * Open the ESP32 NVS namespace used for pill-dispenser settings.
@@ -125,7 +146,7 @@ void servoActionInit() {
 }
 
 bool servoActionLoop() {
-  if (false || myServo.read() > 170) { // TODO beam break check
+  if (myServo.read() > 170) {
     stopped = true;
   } else if (state == 0) {
     myServo.write(myServo.read() + 30);
@@ -144,6 +165,7 @@ void setup() {
   if (!beginPersistentStorage()) {
     Serial.println("Warning: persistent storage could not be opened.");
   }
+  pinMode(BEAM_BREAK_PIN, BEAM_BREAK_ACTIVE_LOW ? INPUT_PULLUP : INPUT_PULLDOWN);
   ESP32PWM::allocateTimer(0);
   myServo.setPeriodHertz(50);      // standard 50 Hz servo signal
   myServo.attach(SERVO_PIN, 1000, 2000); // min/max pulse widths in µs
@@ -156,6 +178,7 @@ void loop() {
   loopCounter++;
   bool print = loopCounter % 10 == 0;
   syncClockFromCharacteristic();
+  reportBeamBreakState();
 
   if (print) {
     Serial.print("Servo attached? ");
