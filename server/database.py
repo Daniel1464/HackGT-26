@@ -28,6 +28,10 @@ class Database:
             columns = {row[1] for row in db.execute("PRAGMA table_info(medicines)")}
             if "schedule" not in columns:
                 db.execute("ALTER TABLE medicines ADD COLUMN schedule TEXT")
+            if "mobile" not in {row[1] for row in db.execute("PRAGMA table_info(oauth_states)")}:
+                db.execute("ALTER TABLE oauth_states ADD COLUMN mobile INTEGER NOT NULL DEFAULT 0")
+            db.execute("""CREATE TABLE IF NOT EXISTS oauth_handoffs (
+                ticket_hash TEXT PRIMARY KEY, provider TEXT NOT NULL, expires_at REAL NOT NULL)""")
 
     @contextmanager
     def connect(self):

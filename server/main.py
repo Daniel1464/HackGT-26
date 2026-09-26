@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response
 from fastapi.security import APIKeyHeader
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from config import Settings
@@ -186,7 +187,7 @@ def create_app(settings=None, transport=None):
         state, browser, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(32), secrets.token_urlsafe(64)
         with app.state.db.connect() as db:
             db.execute("DELETE FROM oauth_states WHERE expires_at<?", (time.time(),))
-            db.execute("INSERT INTO oauth_states VALUES(?,?,?,?,?)", (
+            db.execute("INSERT INTO oauth_states(state,provider,browser_hash,verifier,expires_at) VALUES(?,?,?,?,?)", (
                 state, provider, hashlib.sha256(browser.encode()).hexdigest(), verifier, time.time() + 600))
         response.set_cookie(f"oauth_{provider}", browser, max_age=600, httponly=True, samesite="lax",
                             secure=settings.public_url.startswith("https://"), path=f"/auth/{provider}")
@@ -201,6 +202,37 @@ def create_app(settings=None, transport=None):
             url = "https://www.instagram.com/oauth/authorize"
         return {"authorization_url": f"{url}?{urlencode(params)}"}
 
+    @app.post("/auth/{provider}/mobile", dependencies=protected)
+    def mobile_login(provider: Provider):
+        if not getattr(settings, f"{provider}_client_id") or (provider == "instagram" and not settings.instagram_client_secret):
+            raise HTTPException(503, f"Configure {provider} OAuth credentials in server/.env.")
+        ticket = secrets.token_urlsafe(32)
+        with app.state.db.connect() as db:
+            db.execute("DELETE FROM oauth_handoffs WHERE expires_at<?", (time.time(),))
+            db.execute("INSERT INTO oauth_handoffs VALUES(?,?,?)",
+                       (hashlib.sha256(ticket.encode()).hexdigest(), provider, time.time() + 120))
+        return {"browser_url": f"{settings.public_url.rstrip('/')}/auth/{provider}/browser?ticket={ticket}"}
+
+    @app.get("/auth/{provider}/browser")
+    def browser_login(provider: Provider, ticket: str):
+        with app.state.db.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            digest = hashlib.sha256(ticket.encode()).hexdigest()
+            row = db.execute("SELECT * FROM oauth_handoffs WHERE ticket_hash=? AND provider=?", (digest, provider)).fetchone()
+            if not row or row["expires_at"] < time.time():
+                raise HTTPException(400, "Expired or invalid sign-in link. Start again in the app.")
+            db.execute("DELETE FROM oauth_handoffs WHERE ticket_hash=?", (digest,))
+        response = RedirectResponse("/", status_code=303)
+        result = login(provider, response)
+        from urllib.parse import parse_qs, urlparse
+        state = parse_qs(urlparse(result["authorization_url"]).query)["state"][0]
+        with app.state.db.connect() as db:
+            db.execute("UPDATE oauth_states SET mobile=1 WHERE state=?", (state,))
+        response.headers["location"] = result["authorization_url"]
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
     @app.get("/auth/{provider}/callback")
     async def callback(provider: Provider, request: Request, response: Response,
                        state: str, code: str | None = None, error: str | None = None):
@@ -213,12 +245,23 @@ def create_app(settings=None, transport=None):
                 raise HTTPException(400, "Invalid or expired OAuth state. Start sign-in again in the same browser.")
             db.execute("DELETE FROM oauth_states WHERE state=?", (state,))
         response.delete_cookie(f"oauth_{provider}", path=f"/auth/{provider}")
+        def mobile_result(status):
+            result = RedirectResponse(f"pilldispenser://oauth-return?status={status}", status_code=303)
+            result.delete_cookie(f"oauth_{provider}", path=f"/auth/{provider}")
+            result.headers["Cache-Control"] = "no-store"
+            return result
         if error or not code:
+            if row["mobile"]:
+                return mobile_result("error")
             raise HTTPException(400, "Social sign-in was denied or returned no authorization code.")
         try:
             account = await app.state.social.connect(provider, code, row["verifier"])
         except ProviderError as exc:
+            if row["mobile"]:
+                return mobile_result("error")
             raise HTTPException(502, str(exc)) from exc
+        if row["mobile"]:
+            return mobile_result("success")
         return {"success": True, "account": account}
 
     @app.post("/medicines/{medicine_id}/notify-missed", dependencies=protected)

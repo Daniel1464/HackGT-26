@@ -9,6 +9,30 @@ Calling the notification endpoint explicitly publishes the missed-dose message.
 
 ## App synchronization
 
+### Connecting social accounts in the mobile app
+
+The home screen's **Social accounts** card connects X/Instagram, displays the
+server's connected usernames, toggles notification assignment, and disconnects
+accounts with confirmation. It never publishes a post just by connecting.
+Use a native development build with the existing `pilldispenser` URL scheme;
+Expo Go and the web preview are not supported for this mobile OAuth return flow.
+
+Configure provider credentials and a phone-reachable HTTPS `PUBLIC_URL` in the
+server `.env`. Register `${PUBLIC_URL}/auth/x/callback` and
+`${PUBLIC_URL}/auth/instagram/callback` in the respective provider dashboards.
+The frontend uses the same server URL/key documented below. Restart the server
+after updating it; reload the app. OAuth access tokens and client secrets remain
+server-side. Instagram needs a professional account and the required approved
+permissions. Provider approval/access restrictions still apply.
+
+The app requests an authenticated, two-minute, single-use browser handoff URL.
+Opening it establishes the browser cookie before redirecting to the provider.
+The server validates the callback, stores tokens, then returns only a status via
+`pilldispenser://oauth-return`. The app refreshes `/accounts` to verify connection.
+Cancelled/failed sign-ins do not fabricate a connected account. Use Refresh if
+you return manually. Keep access logging disabled to avoid logging handoff URLs.
+Disconnect deletes local tokens; revoke consent on the provider separately.
+
 Add these to `pill-dispenser-app/.env.local` (keep existing entries):
 
 ```dotenv

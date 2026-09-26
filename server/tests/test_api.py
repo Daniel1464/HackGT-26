@@ -15,6 +15,38 @@ from main import create_app
 
 
 class DemoTests(unittest.TestCase):
+    def test_mobile_oauth_handoff(self):
+        for provider in ("x", "instagram"):
+            result = self.client.post(f"/auth/{provider}/mobile")
+            self.assertEqual(result.status_code, 200)
+            browser_url = result.json()["browser_url"]
+            self.assertNotIn("test-key", browser_url)
+            opened = self.client.get(browser_url, follow_redirects=False)
+            self.assertEqual(opened.status_code, 303)
+            self.assertIn(f"oauth_{provider}=", opened.headers["set-cookie"])
+            self.assertEqual(self.client.get(browser_url, follow_redirects=False).status_code, 400)
+            state = parse_qs(urlparse(opened.headers["location"]).query)["state"][0]
+            callback = f"/auth/{provider}/callback?state={state}&code=code"
+            with TestClient(create_app(self.settings, httpx.MockTransport(self.provider))) as stranger:
+                self.assertEqual(stranger.get(callback, follow_redirects=False).status_code, 400)
+            finished = self.client.get(callback, follow_redirects=False)
+            self.assertEqual(finished.status_code, 303)
+            self.assertEqual(finished.headers["location"], "pilldispenser://oauth-return?status=success")
+            self.assertEqual(self.client.get(callback, follow_redirects=False).status_code, 400)
+        self.assertEqual(len(self.client.get("/accounts").json()["accounts"]), 2)
+
+    def test_mobile_handoff_expiry_and_denial(self):
+        browser_url = self.client.post("/auth/x/mobile").json()["browser_url"]
+        with self.app.state.db.connect() as db:
+            db.execute("UPDATE oauth_handoffs SET expires_at=0")
+        self.assertEqual(self.client.get(browser_url, follow_redirects=False).status_code, 400)
+        browser_url = self.client.post("/auth/x/mobile").json()["browser_url"]
+        opened = self.client.get(browser_url, follow_redirects=False)
+        state = parse_qs(urlparse(opened.headers["location"]).query)["state"][0]
+        denied = self.client.get(f"/auth/x/callback?state={state}&error=access_denied", follow_redirects=False)
+        self.assertEqual(denied.headers["location"], "pilldispenser://oauth-return?status=error")
+        self.assertEqual(self.client.get("/accounts").json()["accounts"], [])
+
     def test_full_schedule_sync(self):
         value = {"medicine": "Vitamin B", "id": 1,
                  "data": [{"time": "12:30 UTC", "dose": 2}, {"time": "22:00 UTC", "dose": 1}]}
