@@ -4,18 +4,19 @@
 #include "NimBLEDevice.h"
 
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define HELLO_WORLD_UUID    "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define COUNTER_UUID        "48f7d908-c8b4-4066-a809-c67e4bdb2b86"
+#define SERVO_TARGET_UUID    "48f7d908-c8b4-4066-a809-c67e4bdb2b86"
 #define TIME_UUID           "5a84b053-9bfe-4f27-8c2a-c4dce2bf537f"
 #define DEVICE_NAME         "ESP32-PillDispenser"
 #define SERVO_PIN           13
+#define A                   0.2347
+#define B                   0.051
+
 
 Servo myServo;
-int num = 0;
 NimBLEServer *pServer;
-NimBLECharacteristic *helloWorld;
-NimBLECharacteristic *counter;
+NimBLECharacteristic *servoTarget;
 NimBLECharacteristic *timeCharacteristic;
+float velocity;
 Preferences persistentStorage;
 bool persistentStorageReady = false;
 
@@ -92,13 +93,8 @@ void setupBluetooth() {
   // Note: make sure to initialize characteristics 
   // (the topics in which data is broadcasted over)
   // before calling startAdvertising()
-  helloWorld = pService->createCharacteristic(
-    HELLO_WORLD_UUID,
-    NIMBLE_PROPERTY::READ |
-    NIMBLE_PROPERTY::WRITE
-  );
-  counter = pService->createCharacteristic(
-    COUNTER_UUID,
+  servoTarget = pService->createCharacteristic(
+    SERVO_TARGET_UUID,
     NIMBLE_PROPERTY::READ |
     NIMBLE_PROPERTY::WRITE
   );
@@ -107,8 +103,7 @@ void setupBluetooth() {
     NIMBLE_PROPERTY::READ |
     NIMBLE_PROPERTY::WRITE
   );
-  helloWorld->setValue("Hello World!");
-  counter->setValue("0");
+  servoTarget->setValue("0");
   timeCharacteristic->setValue("0");
 
   pService->start();
@@ -120,6 +115,29 @@ void setupBluetooth() {
   
   NimBLEDevice::startAdvertising();
   Serial.println("Advertising started! Check your phone.");
+}
+
+int state = 0;
+bool stopped = true;
+
+void servoActionInit() {
+  stopped = false;
+  state = 0;
+}
+
+bool servoActionLoop() {
+  if (false || myServo.read() > 170) { // TODO beam break check
+    stopped = true;
+  } else if (state == 0) {
+    myServo.write(myServo.read() + 30);
+    state = 1;
+  } else if (state == 1) {
+    myServo.write(myServo.read() - 15);
+    state = 0;
+  } else {
+    servoActionInit();
+  }
+  return stopped;
 }
 
 void setup() {
@@ -135,8 +153,19 @@ void setup() {
 
 void loop() {
   syncClockFromCharacteristic();
-  num++;
-  counter->setValue(std::to_string(num));
+
+  Serial.print("Servo attached? ");
+  Serial.println(myServo.attached() ? "true" : "false");
+
+  int servoTargetVal = servoTarget->getValue<int>();
+  myServo.write(servoTargetVal);
+
+  Serial.print("Servo Val: ");
+  Serial.println(myServo.read());
+  velocity = A + B * (myServo.read() - 96);
+  Serial.print("Velocity: ");
+  Serial.println(velocity);
+
   if (clockSynchronized) {
     const std::string currentTime = std::to_string(currentUtcSeconds());
     timeCharacteristic->setValue(currentTime);
@@ -152,5 +181,7 @@ void loop() {
   } else {
     Serial.println("not synchronized");
   }
-  delay(1000);
+  // Serial.print("Num Bluetooth Devices Connected: ");
+  // Serial.println(pServer->getConnectedCount());
+  delay(100);
 }
