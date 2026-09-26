@@ -153,6 +153,8 @@ uint64_t syncedUtcSeconds = 0;
 uint32_t syncedAtMillis = 0;
 bool clockSynchronized = false;
 std::string lastTimePayload;
+// Last UTC minute (0..1439) we checked the schedule for; 0xFFFF means "never".
+uint16_t lastCheckedMinute = 0xFFFF;
 
 uint64_t currentUtcSeconds() {
   if (!clockSynchronized) return 0;
@@ -176,6 +178,32 @@ void syncClockFromCharacteristic() {
   clockSynchronized = true;
   Serial.print("UTC clock synchronized to ");
   Serial.println(static_cast<unsigned long>(syncedUtcSeconds));
+}
+
+/**
+ * Check the current UTC minute against the stored dispensing times.
+ *
+ * Records are only read from NVS when the minute changes, so the persistent
+ * cache is not hit on every loop iteration.
+ */
+void checkMedicineSchedule() {
+  if (!clockSynchronized) return;
+
+  const uint16_t minutesNow = static_cast<uint16_t>((currentUtcSeconds() / 60) % (24 * 60));
+  if (minutesNow == lastCheckedMinute) return;
+  lastCheckedMinute = minutesNow;
+
+  uint8_t record[MEDICINE_DOSE_BYTES * MEDICINE_MAX_DOSES];
+  for (uint8_t medicineId = 0; medicineId <= 1; medicineId++) {
+    const size_t used = readMedicineRecord(medicineId, record, sizeof(record));
+    for (size_t offset = 0; offset + MEDICINE_DOSE_BYTES <= used; offset += MEDICINE_DOSE_BYTES) {
+      const uint16_t minutes = static_cast<uint16_t>(record[offset]) |
+        (static_cast<uint16_t>(record[offset + 1]) << 8);
+      if (minutes == minutesNow) {
+        Serial.println("time to take medicine");
+      }
+    }
+  }
 }
 
 void setupBluetooth() {
@@ -278,6 +306,8 @@ void loop() {
     // the next loop iteration.
     lastTimePayload = currentTime;
   }
+
+  checkMedicineSchedule();
   if (print) {
     Serial.print("Num Devices Connected: ");
     Serial.println(pServer->getConnectedCount());
