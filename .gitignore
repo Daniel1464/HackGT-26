@@ -3,6 +3,7 @@
 .junie
 .venv
 .pio
+.pnpm-store/
 
 # dependencies
 node_modules/
