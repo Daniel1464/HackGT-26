@@ -5,6 +5,7 @@
 .pio
 .pnpm-store/
 pill-dispenser-app/.env
+__pycache__
 
 # dependencies
 node_modules/
