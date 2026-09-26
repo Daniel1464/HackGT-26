@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { fromByteArray } from 'base64-js';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { BleManager, State, type Device, type Subscription } from 'react-native-ble-plx';
 
-import { CounterCharacteristicUUID, CounterServiceUUIDs } from '@/constants/ble';
+import {
+  CounterCharacteristicUUID,
+  CounterServiceUUIDs,
+  TimeCharacteristicUUID,
+} from '@/constants/ble';
 import { parseCounterValue, type BleCounterStatus, type UseBleCounterResult } from '@/lib/ble-counter';
 
 /** How long the service filtered scan runs before the broad scan takes over. */
@@ -11,6 +16,8 @@ const FILTERED_SCAN_TIMEOUT_MS = 8_000;
 const BROAD_SCAN_TIMEOUT_MS = 6_000;
 /** The firmware rewrites the counter once per second, so poll at the same rate. */
 const POLL_INTERVAL_MS = 1_000;
+/** Re-sync the ESP32 clock periodically so its millis-based clock stays accurate. */
+const TIME_SYNC_INTERVAL_MS = 60_000;
 /** iOS reports an unknown Bluetooth state until its stack has finished starting. */
 const BLUETOOTH_STATE_TIMEOUT_MS = 5_000;
 const BLUETOOTH_STATE_POLL_MS = 250;
@@ -23,6 +30,7 @@ type BleSession = {
   device: Device | null;
   subscriptions: Subscription[];
   pollTimer: ReturnType<typeof setInterval> | null;
+  timeSyncTimer: ReturnType<typeof setInterval> | null;
 };
 
 function normalizeUuid(uuid: string): string {
@@ -36,6 +44,18 @@ function isCounterServiceUuid(uuid: string): boolean {
 
 function isCounterCharacteristicUuid(uuid: string): boolean {
   return normalizeUuid(uuid) === normalizeUuid(CounterCharacteristicUUID);
+}
+
+function isTimeCharacteristicUuid(uuid: string): boolean {
+  return normalizeUuid(uuid) === normalizeUuid(TimeCharacteristicUUID);
+}
+
+function encodeAscii(value: string): string {
+  const bytes = new Uint8Array(value.length);
+  for (let index = 0; index < value.length; index += 1) {
+    bytes[index] = value.charCodeAt(index);
+  }
+  return fromByteArray(bytes);
 }
 
 function advertisesCounterService(device: Device): boolean {
@@ -170,6 +190,10 @@ export function useBleCounter(): UseBleCounterResult {
       clearInterval(session.pollTimer);
       session.pollTimer = null;
     }
+    if (session.timeSyncTimer) {
+      clearInterval(session.timeSyncTimer);
+      session.timeSyncTimer = null;
+    }
     for (const subscription of session.subscriptions.splice(0)) {
       subscription.remove();
     }
@@ -188,7 +212,12 @@ export function useBleCounter(): UseBleCounterResult {
   const connect = useCallback(async () => {
     const runId = ++runIdRef.current;
     const isStale = () => !aliveRef.current || runIdRef.current !== runId;
-    const session: BleSession = { device: null, subscriptions: [], pollTimer: null };
+    const session: BleSession = {
+      device: null,
+      subscriptions: [],
+      pollTimer: null,
+      timeSyncTimer: null,
+    };
 
     await disposeSession(sessionRef.current);
     sessionRef.current = session;
@@ -286,6 +315,13 @@ export function useBleCounter(): UseBleCounterResult {
         throw new Error('The connected device does not expose the counter characteristic.');
       }
 
+      const timeCharacteristic = (await ready.characteristicsForService(serviceUuid)).find(
+        (item) => isTimeCharacteristicUuid(item.uuid),
+      );
+      if (!timeCharacteristic) {
+        throw new Error('The connected device does not expose the time characteristic.');
+      }
+
       const readCounter = async () => {
         try {
           const value = await ready.readCharacteristicForService(
@@ -300,6 +336,15 @@ export function useBleCounter(): UseBleCounterResult {
           if (isStale()) return;
           setError(`Could not read the counter: ${toError(readError).message}`);
         }
+      };
+
+      const syncUtcTime = async () => {
+        const utcSeconds = Math.floor(Date.now() / 1_000).toString();
+        await ready.writeCharacteristicWithResponseForService(
+          serviceUuid,
+          timeCharacteristic.uuid,
+          encodeAscii(utcSeconds),
+        );
       };
 
       // The firmware only exposes READ on the counter, so polling is what keeps
@@ -320,6 +365,14 @@ export function useBleCounter(): UseBleCounterResult {
       session.pollTimer = setInterval(() => {
         void readCounter();
       }, POLL_INTERVAL_MS);
+
+      await syncUtcTime();
+      session.timeSyncTimer = setInterval(() => {
+        void syncUtcTime().catch((syncError: unknown) => {
+          if (isStale()) return;
+          setError(`Could not synchronize the clock: ${toError(syncError).message}`);
+        });
+      }, TIME_SYNC_INTERVAL_MS);
 
       setStatus('connected');
       await readCounter();
