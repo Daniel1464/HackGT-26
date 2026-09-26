@@ -8,6 +8,7 @@
 #define TIME_UUID           "5a84b053-9bfe-4f27-8c2a-c4dce2bf537f"
 #define MEDICINE_UUID       "9c8b3e10-74d5-4e36-a5a1-938871102001"
 #define REMOVE_MEDICINE_UUID "d2d13576-fe66-4af5-ad40-17535cc3fd2a"
+#define MEDICINE_NAME_UUID  "9c8b3e10-74d5-4e36-a5a1-938871102002"
 #define DEVICE_NAME         "ESP32-PillDispenser"
 #define SERVO_PIN           13
 #define BEAM_BREAK_PIN      26
@@ -19,6 +20,8 @@
 // [medicine ID:u8][minutes since midnight UTC:u16 LE][dose:u32 LE].
 constexpr size_t MEDICINE_DOSE_BYTES = 7;
 constexpr size_t MEDICINE_MAX_DOSES = 32;
+// Medicine names are persisted as UTF-8 strings alongside their medicine ID.
+constexpr size_t MEDICINE_NAME_MAX_BYTES = 64;
 
 
 Servo myServo;
@@ -64,6 +67,19 @@ int32_t readPersistentInt(const char *key, int32_t defaultValue = 0) {
   return persistentStorage.getInt(key, defaultValue);
 }
 
+/** Write a UTF-8 string under key. Returns false if NVS is unavailable. */
+bool writePersistentString(const char *key, const std::string &value) {
+  if (!persistentStorageReady || key == nullptr) return false;
+  return persistentStorage.putString(key, value.c_str()) > 0;
+}
+
+/** Read a UTF-8 string, returning defaultValue when the key does not exist. */
+std::string readPersistentString(const char *key, const char *defaultValue = "") {
+  if (!persistentStorageReady || key == nullptr) return defaultValue;
+  const String stored = persistentStorage.getString(key, defaultValue);
+  return std::string(stored.c_str());
+}
+
 String medicineStorageKey(uint8_t medicineId) {
   return String("medicine") + String(medicineId);
 }
@@ -99,6 +115,37 @@ bool writeMedicineRecord(uint8_t medicineId, const uint8_t *data, size_t length)
 bool clearMedicineRecord(uint8_t medicineId) {
   if (medicineId > 1 || !persistentStorageReady) return false;
   const String key = medicineStorageKey(medicineId);
+  if (!persistentStorage.isKey(key.c_str())) return true;
+  return persistentStorage.remove(key.c_str());
+}
+
+/** Key that pairs a medicine ID with its display name, e.g. "medicineIdName0". */
+String medicineNameStorageKey(uint8_t medicineId) {
+  return String("medicineIdName") + String(medicineId);
+}
+
+/** Persist the display name paired with a medicine ID. */
+bool writeMedicineName(uint8_t medicineId, const std::string &name) {
+  if (medicineId > 1 || name.empty() || name.size() > MEDICINE_NAME_MAX_BYTES) return false;
+  const String key = medicineNameStorageKey(medicineId);
+  return writePersistentString(key.c_str(), name);
+}
+
+/** Read the display name paired with a medicine ID, or "" when unset. */
+std::string readMedicineName(uint8_t medicineId, const char *defaultValue) {
+  if (medicineId > 1) return "";
+  const String key = medicineNameStorageKey(medicineId);
+  return readPersistentString(key.c_str(), defaultValue);
+}
+
+/**
+ * Erase the stored display name paired with a medicine ID.
+ *
+ * Returns true when no name is stored afterwards, including when none was.
+ */
+bool clearMedicineName(uint8_t medicineId) {
+  if (medicineId > 1 || !persistentStorageReady) return false;
+  const String key = medicineNameStorageKey(medicineId);
   if (!persistentStorage.isKey(key.c_str())) return true;
   return persistentStorage.remove(key.c_str());
 }
@@ -160,13 +207,17 @@ const char *medicineSlotsValue() {
 constexpr size_t REMOVE_MEDICINE_PACKET_BYTES = 1;
 
 /**
- * Remove one medicine by its ID, dropping every stored dose for that slot.
+ * Remove one medicine by its ID, dropping every stored dose for that slot and
+ * the display name paired with it.
  *
  * Clearing the slot makes it available again to `getNextMedicineId()` on the
  * app side.
  */
 bool removeMedicineById(uint8_t medicineId) {
-  if (medicineId > 1 || !clearMedicineRecord(medicineId)) return false;
+  if (medicineId > 1) return false;
+  const bool recordCleared = clearMedicineRecord(medicineId);
+  const bool nameCleared = clearMedicineName(medicineId);
+  if (!recordCleared || !nameCleared) return false;
   // Abandon any in-flight transfer so a stray packet cannot resurrect the slot.
   if (medicinePacketSessionActive && activeMedicinePacketId == medicineId) {
     medicinePacketSessionActive = false;
@@ -189,7 +240,30 @@ class MedicineCallbacks : public NimBLECharacteristicCallbacks {
     }
 };
 
-// Each write is a single byte [medicine ID:u8]; it deletes that medicine's record.
+// Each write is [medicine ID:u8][medicine name UTF-8 bytes].
+constexpr size_t MEDICINE_NAME_PACKET_MIN_BYTES = 2;
+constexpr size_t MEDICINE_NAME_PACKET_MAX_BYTES = MEDICINE_NAME_MAX_BYTES + 1;
+
+class MedicineNameCallbacks : public NimBLECharacteristicCallbacks {
+  public:
+    void onRead(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
+      std::string medicineName = "0:" + readMedicineName(0, "__NO_MEDICINE__") + ",1:" + readMedicineName(1, "__NO_MEDICINE__");
+      characteristic->setValue(medicineName);
+    }
+
+    void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
+      // The app writes a medicine ID followed by its display name.
+      const std::string packet = characteristic->getValue();
+      const bool saved = packet.size() >= MEDICINE_NAME_PACKET_MIN_BYTES &&
+        packet.size() <= MEDICINE_NAME_PACKET_MAX_BYTES &&
+        writeMedicineName(static_cast<uint8_t>(packet[0]), packet.substr(1));
+      characteristic->setValue(saved ? "SAVED" : "ERROR:packet");
+      Serial.println(saved ? "Medicine name saved to flash" : "Invalid medicine name packet");
+    }
+};
+
+// Each write is a single byte [medicine ID:u8]; it deletes that medicine's
+// record and its stored display name.
 class RemoveMedicineCallbacks: public NimBLECharacteristicCallbacks {
   public:
     void onRead(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
@@ -202,11 +276,12 @@ class RemoveMedicineCallbacks: public NimBLECharacteristicCallbacks {
       const bool removed = value.size() == REMOVE_MEDICINE_PACKET_BYTES &&
         removeMedicineById(static_cast<uint8_t>(value[0]));
       characteristic->setValue(removed ? "REMOVED" : "ERROR:packet");
-      Serial.println(removed ? "Medicine record removed from flash" : "Invalid remove medicine packet");
+      Serial.println(removed ? "Medicine record and name removed from flash" : "Invalid remove medicine packet");
     }
 };
 
 MedicineCallbacks medicineCallbacks;
+MedicineNameCallbacks medicineNameCallbacks;
 RemoveMedicineCallbacks removeMedicineCallbacks;
 
 uint64_t syncedUtcSeconds = 0;
@@ -273,7 +348,9 @@ void printMedicineCache() {
     const size_t used = readMedicineRecord(medicineId, record, sizeof(record));
     Serial.print("Medicine ");
     Serial.print(medicineId);
-    Serial.print(" cached doses: ");
+    Serial.print(" (");
+    Serial.print(readMedicineName(medicineId, "").c_str());
+    Serial.print(") cached doses: ");
     if (used == 0) {
       Serial.println("none");
       continue;
@@ -322,6 +399,10 @@ void setupBluetooth() {
     MEDICINE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
   medicine->setCallbacks(&medicineCallbacks);
   medicine->setValue("IDLE");
+  NimBLECharacteristic *medicineName = pService->createCharacteristic(
+    MEDICINE_NAME_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+  medicineName->setCallbacks(&medicineNameCallbacks);
+  medicineName->setValue("IDLE");
   NimBLECharacteristic *removeMedicine = pService->createCharacteristic(
     REMOVE_MEDICINE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
   removeMedicine->setCallbacks(&removeMedicineCallbacks);
@@ -380,8 +461,8 @@ void loop() {
   bool print = loopCounter % 10 == 0;
   syncClockFromCharacteristic();
 
-  Serial.print("Beam break: ");
-  Serial.println(digitalRead(BEAM_BREAK_PIN));
+  // Serial.print("Beam break: ");
+  // Serial.println(digitalRead(BEAM_BREAK_PIN));
 
   if (print) {
     Serial.print("Servo attached? ");
