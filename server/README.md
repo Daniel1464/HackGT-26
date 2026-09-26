@@ -3,9 +3,41 @@
 Single-user FastAPI server. SQLite stores two medicine slots and one connected
 account per provider (X and Instagram). A connected account is assigned to
 notifications by default; `PATCH /accounts/{provider}` toggles assignment.
-This server has its own requested medicine storage; it does not automatically
-synchronize with the app or ESP32 and does not infer whether medicine was taken.
+The app uploads each successfully broadcast medicine schedule to this server.
+It does not read schedules back from the ESP32 or infer whether medicine was taken.
 Calling the notification endpoint explicitly publishes the missed-dose message.
+
+## App synchronization
+
+Add these to `pill-dispenser-app/.env.local` (keep existing entries):
+
+```dotenv
+EXPO_PUBLIC_SERVER_API_URL=https://your-server-or-tunnel.example
+EXPO_PUBLIC_SERVER_API_KEY=the-same-value-as-server-API_KEY
+```
+
+Use a URL reachable from the phone, not the phone's `localhost`. Prefer HTTPS.
+For LAN development bind Uvicorn with `--host 0.0.0.0` and use the computer's LAN
+IP on the phone; native platform cleartext restrictions may require HTTPS.
+Restart Expo and fully reload the app after changing environment variables.
+The API key is bundled publicly for this single-user demo, not production-grade
+authentication. Never put social OAuth client secrets in the Expo environment.
+
+The shared frontend `sendMedicine` path writes BLE first, then calls authenticated
+`PUT /medicines/{id}/schedule` with `{medicine,id,data:[{time:"HH:MM UTC",dose:2}]}`.
+Success requires both operations. Missing configuration fails before BLE writes;
+network failures/timeouts report that BLE already succeeded. There is no automatic
+BLE retry or offline queue. A failed/uncertain server write can be retried directly
+through the idempotent HTTP PUT without broadcasting the BLE packets again.
+Deleting medicine on the board is not yet synchronized by this upload path.
+
+All doses are retained in SQLite; updates replace the server schedule for that ID.
+GET medicine responses include `data` and `timezone:"UTC"` for app-uploaded records.
+Legacy `time_to_take` is the first entry's HH:MM for these records, in UTC, not the
+server default timezone. Legacy single-time writes still work and clear any prior
+full schedule. Existing databases migrate automatically without deleting records.
+For multi-dose records, pass zero-based `dose_index` to `notify-missed` to select
+which scheduled time to publish; ambiguous requests are rejected.
 
 ## Run (Python 3.10+)
 

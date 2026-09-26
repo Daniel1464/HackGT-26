@@ -15,6 +15,24 @@ from main import create_app
 
 
 class DemoTests(unittest.TestCase):
+    def test_full_schedule_sync(self):
+        value = {"medicine": "Vitamin B", "id": 1,
+                 "data": [{"time": "12:30 UTC", "dose": 2}, {"time": "22:00 UTC", "dose": 1}]}
+        self.assertEqual(self.client.put("/medicines/1/schedule", json=value).status_code, 200)
+        stored = self.client.get("/medicines/1").json()
+        self.assertEqual(stored["data"], value["data"])
+        self.assertEqual(stored["timezone"], "UTC")
+        self.assertEqual(self.client.post("/medicines/1/notify-missed", json={}).status_code, 422)
+        self.assertEqual(self.client.put("/medicines/0/schedule", json=value).status_code, 422)
+        self.assertEqual(self.client.put("/medicines/1/schedule", json={**value, "data": []}).status_code, 422)
+        with TestClient(create_app(self.settings)) as restarted:
+            self.assertEqual(restarted.get("/medicines/1", headers={"X-API-Key": "test-key"}).json(), stored)
+        value["data"] = [{"time": "09:00 UTC", "dose": 3}]
+        self.assertEqual(self.client.put("/medicines/1/schedule", json=value).status_code, 200)
+        self.assertEqual(self.client.get("/medicines/1").json()["data"], value["data"])
+        self.assertEqual(self.client.delete("/medicines/1").status_code, 204)
+        self.assertEqual(self.client.get("/medicines/1").status_code, 404)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.settings = Settings(database=str(Path(self.temp.name) / "test.sqlite3"), api_key="test-key",

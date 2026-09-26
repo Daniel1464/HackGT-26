@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fromByteArray, toByteArray } from 'base64-js';
 import { medicineDosePacket, type MedicineRecord } from '@/lib/medicine';
+import { broadcastAndSyncMedicine } from '@/lib/medicine-api';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { BleManager, State, type Device, type Subscription } from 'react-native-ble-plx';
 
@@ -534,7 +535,7 @@ export function useBleCounter(): UseBleCounterResult {
   const sendMedicine = useCallback(async (record: MedicineRecord) => {
     const send = sessionRef.current?.sendMedicine;
     if (!send) throw new Error('Connect to the dispenser before sending.');
-    await send(record);
+    await broadcastAndSyncMedicine(record, send);
   }, []);
 
   const getMedicineIdForName = useCallback(async (medicineName: string): Promise<0 | 1> => {

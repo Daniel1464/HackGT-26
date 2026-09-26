@@ -25,6 +25,9 @@ class Database:
                     expires_at REAL NOT NULL
                 );
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(medicines)")}
+            if "schedule" not in columns:
+                db.execute("ALTER TABLE medicines ADD COLUMN schedule TEXT")
 
     @contextmanager
     def connect(self):
