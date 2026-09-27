@@ -2,6 +2,7 @@
 #include <ESP32Servo.h>
 #include <Preferences.h>
 #include "NimBLEDevice.h"
+#include "dispenser-beacon.h"
 
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define SERVO_TARGET_UUID    "48f7d908-c8b4-4066-a809-c67e4bdb2b86"
@@ -442,6 +443,7 @@ void setupBluetooth() {
   // Initialize the device with a local name
   NimBLEDevice::init(DEVICE_NAME);
   pServer = NimBLEDevice::createServer();
+  pServer->setCallbacks(&beaconServerCallbacks, false);
   NimBLEService *pService = pServer->createService(SERVICE_UUID);
   pServer->advertiseOnDisconnect(true);
 
@@ -475,10 +477,7 @@ void setupBluetooth() {
 
   pService->start();
 
-  NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setName(DEVICE_NAME);
-  pAdvertising->enableScanResponse(true); // Helps iOS devices discover it
+  configureDispenserBeacon(SERVICE_UUID);
   
   NimBLEDevice::startAdvertising();
   //Serial.println("Advertising started! Check your phone.");

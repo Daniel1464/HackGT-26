@@ -11,6 +11,8 @@
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.daniel-1464.pill-dispenser",
       "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Detect whether your TiMED dispenser beacon is nearby. Your GPS location is not collected.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Monitor your dispenser beacon while the app is in the background.",
         "NSMicrophoneUsageDescription": "This app uses the microphone to talk with the Medication Assistant."
       }
     },
@@ -23,6 +25,10 @@
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_CONNECT",

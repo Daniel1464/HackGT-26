@@ -2,6 +2,7 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ConnectionChip } from '@/components/connection-chip';
+import { DispenserProximity } from '@/components/dispenser-proximity';
 import { ServoWidget } from '@/components/servo-widget';
 import { SocialAccounts } from '@/components/social-accounts';
 import { ThemedText } from '@/components/themed-text';
@@ -33,6 +34,7 @@ export default function SettingsScreen() {
           </View>
 
           <SocialAccounts />
+          <DispenserProximity />
 
           <ThemedText type="code" style={styles.sectionTitle}>
             dispenser
