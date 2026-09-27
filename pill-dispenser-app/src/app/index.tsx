@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AnimatedIcon } from '@/components/animated-icon';
 import { HintRow } from '@/components/hint-row';
+import { MedicationHistory } from '@/components/medication-history';
 import { ServoWidget } from '@/components/servo-widget';
 import { SocialAccounts } from '@/components/social-accounts';
 import { ThemedText } from '@/components/themed-text';
@@ -43,6 +44,7 @@ export default function HomeScreen() {
         </ThemedView>
 
         <ServoWidget />
+        <MedicationHistory />
         <SocialAccounts />
 
         <ThemedText type="code" style={styles.code}>

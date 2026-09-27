@@ -5,7 +5,9 @@ account per provider (X and Instagram). A connected account is assigned to
 notifications by default; `PATCH /accounts/{provider}` toggles assignment.
 The app uploads each successfully broadcast medicine schedule to this server.
 It does not read schedules back from the ESP32 or infer whether medicine was taken.
-Calling the notification endpoint explicitly publishes the missed-dose message.
+The app stores dose history in SQLite and only marks a dose taken when the user
+confirms it in the app. Unconfirmed doses become late 30 seconds after schedule
+time and missed after one hour. These are demo statuses, not sensor-verified use.
 
 ## App synchronization
 
@@ -55,6 +57,14 @@ through the idempotent HTTP PUT without broadcasting the BLE packets again.
 Deleting medicine on the board is not yet synchronized by this upload path.
 
 All doses are retained in SQLite; updates replace the server schedule for that ID.
+The server creates history entries from synced schedules and retains them across
+schedule updates. Future unstarted entries are marked cancelled when their
+schedule is replaced or the medicine is removed. `GET /medication-history`
+returns upcoming and recent events; `POST /medication-history/{event_id}/taken`
+records the user's confirmation and timestamp. The server checks schedules every
+five seconds, so late/missed status transitions can appear up to five seconds
+after their thresholds. Tracking starts when the new history feature first runs;
+older doses are not backfilled.
 GET medicine responses include `data` and `timezone:"UTC"` for app-uploaded records.
 Legacy `time_to_take` is the first entry's HH:MM for these records, in UTC, not the
 server default timezone. Legacy single-time writes still work and clear any prior
@@ -146,6 +156,8 @@ provider-side app authorization can be revoked in that provider's settings.
 | GET | `/medicines` | List medicines and timezone |
 | GET | `/medicines/{0 or 1}` | Read one medicine |
 | DELETE | `/medicines/{0 or 1}` | Remove a slot |
+| GET | `/medication-history` | Read upcoming and recent dose history |
+| POST | `/medication-history/{event_id}/taken` | Confirm a dose was taken |
 | GET | `/auth/{x or instagram}/login` | Get OAuth authorization URL |
 | GET | `/auth/{x or instagram}/callback` | Provider callback |
 | GET | `/webhooks` | Meta webhook verification; echoes `hub.challenge` |

@@ -76,7 +76,19 @@ def create_app(settings=None, transport=None):
         async with httpx.AsyncClient(timeout=20, transport=transport) as http:
             app.state.social = Social(settings, app.state.db, http)
             app.state.publish_lock = asyncio.Lock()
-            yield
+            async def track_doses():
+                while True:
+                    await asyncio.to_thread(app.state.db.refresh_dose_history)
+                    await asyncio.sleep(5)
+            history_task = asyncio.create_task(track_doses())
+            try:
+                yield
+            finally:
+                history_task.cancel()
+                try:
+                    await history_task
+                except asyncio.CancelledError:
+                    pass
 
     app = FastAPI(title="Medication social demo", lifespan=lifespan)
 
@@ -104,9 +116,24 @@ def create_app(settings=None, transport=None):
 
     @app.get("/medicines")
     def list_medicines():
+        app.state.db.refresh_dose_history()
         with app.state.db.connect() as db:
             rows = db.execute("SELECT * FROM medicines ORDER BY id").fetchall()
         return {"medicines": [serialize_medicine(row) for row in rows], "timezone": settings.timezone}
+
+    @app.get("/medication-history")
+    def medication_history():
+        return {"history": app.state.db.dose_history()}
+
+    @app.post("/medication-history/{event_id}/taken")
+    def mark_dose_taken(event_id: int):
+        try:
+            item = app.state.db.mark_dose_taken(event_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if item is None:
+            raise HTTPException(404, "Dose history entry not found.")
+        return item
 
     @app.get("/medicines/{medicine_id}")
     def get_medicine(medicine_id: Slot):
@@ -135,6 +162,7 @@ def create_app(settings=None, transport=None):
     def sync_schedule(medicine_id: Slot, value: MedicineSchedule):
         if value.id != medicine_id:
             raise HTTPException(422, "Body id must match the URL id.")
+        app.state.db.cancel_upcoming_doses(medicine_id)
         with app.state.db.connect() as db:
             db.execute("""INSERT INTO medicines(id,name,time_to_take,schedule) VALUES(?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET name=excluded.name,
@@ -145,6 +173,7 @@ def create_app(settings=None, transport=None):
 
     @app.delete("/medicines/{medicine_id}", status_code=204)
     def remove_medicine(medicine_id: Slot):
+        app.state.db.cancel_upcoming_doses(medicine_id)
         with app.state.db.connect() as db:
             if db.execute("DELETE FROM medicines WHERE id=?", (medicine_id,)).rowcount == 0:
                 raise HTTPException(404, "Medicine slot is empty.")

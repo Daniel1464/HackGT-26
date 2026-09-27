@@ -6,6 +6,41 @@ export type ServerMedicationSchedule = {
   data?: Array<{ time: string; dose: number }>;
 };
 
+export type MedicationDoseHistory = {
+  event_id: number;
+  medicine_id: 0 | 1;
+  medicine_name: string;
+  scheduled_for: string;
+  quantity: number;
+  status: 'upcoming' | 'late' | 'missed' | 'taken' | 'cancelled';
+  taken: boolean;
+  taken_at: string | null;
+};
+
+export async function getServerMedicationHistory(): Promise<MedicationDoseHistory[]> {
+  const base = process.env.EXPO_PUBLIC_SERVER_API_URL?.trim().replace(/\/+$/, '');
+  const key = process.env.EXPO_PUBLIC_SERVER_API_KEY?.trim();
+  if (!base || !key) throw new Error('Set the server API URL and API key to read medication history.');
+  const response = await fetch(`${base}/medication-history`, { headers: { 'X-API-Key': key } });
+  if (!response.ok) throw new Error(`Server returned HTTP ${response.status} while reading medication history.`);
+  const result: unknown = await response.json();
+  if (!result || typeof result !== 'object' || !Array.isArray((result as { history?: unknown }).history)) {
+    throw new Error('Server returned an invalid medication history response.');
+  }
+  return (result as { history: MedicationDoseHistory[] }).history;
+}
+
+export async function markServerDoseTaken(eventId: number): Promise<MedicationDoseHistory> {
+  const base = process.env.EXPO_PUBLIC_SERVER_API_URL?.trim().replace(/\/+$/, '');
+  const key = process.env.EXPO_PUBLIC_SERVER_API_KEY?.trim();
+  if (!base || !key) throw new Error('Set the server API URL and API key to record a dose.');
+  const response = await fetch(`${base}/medication-history/${eventId}/taken`, {
+    method: 'POST', headers: { 'X-API-Key': key },
+  });
+  if (!response.ok) throw new Error(`Server returned HTTP ${response.status} while recording the dose.`);
+  return response.json() as Promise<MedicationDoseHistory>;
+}
+
 export async function getServerMedicationSchedules(): Promise<ServerMedicationSchedule[]> {
   const base = process.env.EXPO_PUBLIC_SERVER_API_URL?.trim().replace(/\/+$/, '');
   const key = process.env.EXPO_PUBLIC_SERVER_API_KEY?.trim();

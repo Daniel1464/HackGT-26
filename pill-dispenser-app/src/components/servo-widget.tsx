@@ -7,7 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useBleCounter } from '@/hooks/use-ble-counter';
 import { useTheme } from '@/hooks/use-theme';
-import { getServerMedicationSchedules } from '@/lib/medicine-api';
+import { getServerMedicationHistory, getServerMedicationSchedules } from '@/lib/medicine-api';
 import {
   isValidServoValue,
   MAX_SERVO_VALUE,
@@ -38,7 +38,7 @@ export function ServoWidget() {
   const theme = useTheme();
   const {
     status, servoValue, deviceName, error, sendServoValue, sendMedicine,
-    getMedicineIdForName, getMedicationNames, saveMedicineName, removeMedicineSchedule, retry,
+    getMedicineIdForName, saveMedicineName, removeMedicineSchedule, retry,
   } = useBleCounter();
   const [draft, setDraft] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -159,10 +159,10 @@ export function ServoWidget() {
         connected={isConnected}
         sendMedicine={sendMedicine}
         getMedicineIdForName={getMedicineIdForName}
-        getMedicationNames={getMedicationNames}
         saveMedicineName={saveMedicineName}
         removeMedicineSchedule={removeMedicineSchedule}
         getServerSchedules={getServerMedicationSchedules}
+        getServerHistory={getServerMedicationHistory}
       />
 
       {status === 'error' && (

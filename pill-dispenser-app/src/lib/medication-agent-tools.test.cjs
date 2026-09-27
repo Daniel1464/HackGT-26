@@ -45,7 +45,8 @@ test('save only reports success after BLE completes; failures stay structured', 
   let saved = false;
   const pending = new Promise(resolve => { release = resolve; });
   const options = { connected: true, medications,
-    getMedicineIdForName: async () => 1, getMedicationNames: async () => [], saveMedicineName: async () => {},
+    getMedicineIdForName: async () => 1, saveMedicineName: async () => {},
+    getServerSchedules: async () => [], getServerHistory: async () => [],
     sendMedicine: () => pending,
     onSaved: () => { saved = true; }, onError: () => {} };
   const tools = createMedicationClientTools(options);
@@ -62,20 +63,17 @@ test('save only reports success after BLE completes; failures stay structured', 
 test('unresolved names never reach BLE; unavailable readers return failures instead of fabricated data', async () => {
   const tools = createMedicationClientTools({ connected: true, medications: [],
     getMedicineIdForName: async () => { throw new Error('Unknown medicine.'); },
-    getMedicationNames: async () => [], saveMedicineName: async () => {},
+    saveMedicineName: async () => {}, getServerSchedules: async () => [], getServerHistory: async () => [],
     sendMedicine: async () => assert.fail('Must not send'), onSaved: () => {}, onError: () => {} });
   assert.equal((await tools.saveMedicationSchedule(input)).success, false);
-  assert.equal((await tools.getNextMedication()).success, false);
-  assert.deepEqual(await tools.getMedicationSchedule(), {
-    success: true, medications: [], scheduleDetailsAvailable: false,
-  });
-  assert.equal((await tools.getPrevMedicationStatus()).success, false);
+  assert.deepEqual(await tools.getMedicationSchedule(), { success: true, medications: [], history: [] });
 });
 
 test('remove validates the exact medicineID parameter and reports success only after deletion', async () => {
   let removed;
   const tools = createMedicationClientTools({ connected: true, medications,
-    getMedicineIdForName: async () => 0, getMedicationNames: async () => [], saveMedicineName: async () => {},
+    getMedicineIdForName: async () => 0, saveMedicineName: async () => {},
+    getServerSchedules: async () => [], getServerHistory: async () => [],
     sendMedicine: async () => {},
     removeMedicineSchedule: async (medicineID) => { removed = medicineID; }, onSaved: () => {}, onError: () => {} });
   assert.equal((await tools.removeMedicineSchedule({ medicineID: 2 })).success, false);
