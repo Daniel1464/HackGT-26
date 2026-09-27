@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
 
-test('repeated sessions never deactivate the SDK-owned native audio session', async () => {
+test('repeated sessions leave native audio ownership exclusively with ElevenLabs', async () => {
   const source = fs.readFileSync(path.join(__dirname, 'voice-audio.ts'), 'utf8');
   const { outputText } = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS },
@@ -12,7 +12,7 @@ test('repeated sessions never deactivate the SDK-owned native audio session', as
   const module = { exports: {} };
   let permissionChecks = 0;
   new Function('require', 'exports', outputText)(name => {
-    assert.equal(name, 'expo-audio', 'Audio session ownership must remain with ElevenLabs');
+    assert.equal(name, 'expo-audio', 'Only microphone authorization is queried here');
     return { AudioModule: { requestRecordingPermissionsAsync: async () => {
       permissionChecks++;
       return { granted: true };

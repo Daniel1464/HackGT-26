@@ -17,7 +17,8 @@ startup/teardown, and permission or connection failures leave a fresh retry path
 
 The app must not call `AudioSession.stopAudioSession()` before starting or after
 SDK teardown: the SDK owns the paired native start/stop calls. Extra deactivation
-can interfere with the iOS shared audio session. LiveKit's Expo initialization
+can interfere with the iOS shared audio session. This ownership is enforced by
+`src/lib/voice-audio.ts`. LiveKit's Expo initialization
 plugins are now registered; installing those requires a new native build.
 Voice startup is independent of Bluetooth; write tools still enforce BLE connectivity.
 
