@@ -36,14 +36,14 @@ test('a live conversation outranks a dropped dispenser', () => {
   assert.equal(resolveOrbState('connected', true, 'connected'), 'speaking');
   assert.equal(resolveOrbState('connected', true, 'unavailable'), 'speaking');
   assert.equal(resolveOrbState('connecting', false, 'connected'), 'connecting');
-  assert.equal(resolveOrbState('disconnected', false, 'pending'), 'linking');
-  assert.equal(resolveOrbState('disconnected', false, 'unavailable'), 'offline');
+  assert.equal(resolveOrbState('disconnected', false, 'pending'), 'idle');
+  assert.equal(resolveOrbState('disconnected', false, 'unavailable'), 'idle');
   assert.equal(resolveOrbState('disconnected', false, 'connected'), 'idle');
 });
 
 test('every orb state maps to a single tap action', () => {
   assert.equal(orbTapFor('idle', 'connected'), 'start');
-  assert.equal(orbTapFor('idle', 'pending'), 'none');
+  assert.equal(orbTapFor('idle', 'pending'), 'start');
   assert.equal(orbTapFor('connecting', 'connected'), 'none');
   assert.equal(orbTapFor('linking', 'pending'), 'none');
   assert.equal(orbTapFor('listening', 'connected'), 'end');
@@ -59,5 +59,14 @@ test('every orb state is themed and described for screen readers', () => {
     for (const color of [palette.core[0], palette.core[1], palette.glow, palette.ring, palette.node]) {
       assert.match(color, /^#[0-9A-F]{6}$/i);
     }
+  }
+});
+
+test('second voice start remains available after Bluetooth drops during the first conversation', () => {
+  for (const connection of ['connected', 'pending', 'unavailable']) {
+    const speaking = resolveOrbState('connected', true, connection);
+    assert.equal(orbTapFor(speaking, connection), 'end');
+    const ended = resolveOrbState('disconnected', false, connection);
+    assert.equal(orbTapFor(ended, connection), 'start');
   }
 });

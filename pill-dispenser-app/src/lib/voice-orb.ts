@@ -67,12 +67,12 @@ export function orbConnectionFor(status: string): OrbConnection {
 export function resolveOrbState(
   conversationStatus: string,
   isSpeaking: boolean,
-  connection: OrbConnection,
+  _connection: OrbConnection,
 ): OrbState {
   if (conversationStatus === 'connected') return isSpeaking ? 'speaking' : 'listening';
   if (conversationStatus === 'connecting') return 'connecting';
-  if (connection === 'unavailable') return 'offline';
-  if (connection === 'pending') return 'linking';
+  // Bluetooth is needed by write tools, not by the voice transport. Never let a
+  // dispenser disconnect turn the next voice tap into a disabled/retry button.
   return 'idle';
 }
 
@@ -80,9 +80,9 @@ export function resolveOrbState(
 export type OrbTap = 'start' | 'end' | 'retry' | 'none';
 
 /** Decides the single action a tap can trigger, so the page stays declarative. */
-export function orbTapFor(state: OrbState, connection: OrbConnection): OrbTap {
+export function orbTapFor(state: OrbState, _connection: OrbConnection): OrbTap {
   if (state === 'offline') return 'retry';
   if (state === 'connecting' || state === 'linking') return 'none';
   if (state === 'listening' || state === 'speaking') return 'end';
-  return connection === 'connected' ? 'start' : 'none';
+  return 'start';
 }
