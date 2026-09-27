@@ -51,13 +51,13 @@ function VoiceHome({ onFinished, previousError }: { onFinished: (error?: string)
         <View style={styles.intro}>
           <View style={styles.header}>
             <ThemedText type="smallBold" themeColor="textSecondary">
-              Pill dispenser
+              Pill dispenser status
             </ThemedText>
             <ConnectionChip status={dispenser.status} />
           </View>
-          <ThemedText type="title">Talk to your dispenser</ThemedText>
+          <ThemedText type="title">Hi There!</ThemedText>
           <ThemedText themeColor="textSecondary">
-            Say what to take and when. The assistant checks every dose before the dispenser locks it in.
+            I'm the magic orb living inside your pill dispenser. Tap on me to start a conversation!
           </ThemedText>
         </View>
 
