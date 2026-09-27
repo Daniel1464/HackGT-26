@@ -11,7 +11,7 @@
 #define MEDICINE_NAME_UUID  "9c8b3e10-74d5-4e36-a5a1-938871102002"
 #define DEVICE_NAME         "ESP32-PillDispenser"
 #define SERVO_0_PIN         13
-#define SERVO_1_PIN         12
+#define SERVO_1_PIN         14
 #define BEAM_BREAK_PIN      26
 #define BEAM_BREAK_ACTIVE_LOW true
 #define A                   0.2347
@@ -69,24 +69,20 @@ void servo0Loop() {
 void servo1Loop() {
   if (servo1State == 0 || servo1Target >= 240) {
     servo1State = 0;
-    servo1Target = 0;
+    servo1Target = 95;
     servo1DelayTicks = 0;
-  } else if (servo1State == 1 && servo1DelayTicks >= 15) {
-    servo1Target += 60;
+  } else if (servo1State == 1 && servo1DelayTicks >= 3) {
+    servo1Target = 110;
     servo1DelayTicks = 0;
     servo1State = 2;
-  } else if (servo1State == 2 && servo1DelayTicks >= 30) {
-    servo1Target -= 30;
+  } else if (servo1State == 2 && servo1DelayTicks >= 6) {
+    servo1Target = 80;
     servo1DelayTicks = 0;
     servo1State = 1;
   } else {
     servo1DelayTicks++;
   }
-  if (servo1Target > 0) {
-    //Serial.print("Servo 1 Target: ");
-    //Serial.println(servo1Target);
-  }
-  servo1.write(180 - servo1Target);
+  servo1.write(servo1Target);
 }
 
 /**
@@ -502,7 +498,7 @@ void setup() {
   servo1.attach(SERVO_1_PIN); // min/max pulse widths in µs
 
   servo0.write(180);
-  servo1.write(180);
+  servo1.write(90);
 
   setupBluetooth();
 }
@@ -519,13 +515,25 @@ void loop() {
   //Serial.println(digitalRead(BEAM_BREAK_PIN));
 
   if (print) {
-    //Serial.print("Servos attached? ");
-    //Serial.print(servo0.attached() ? "1" : "0");
-    //Serial.println(servo1.attached() ? "1" : "0");
-  }
+    Serial.print("Servos attached? ");
+    Serial.print(servo0.attached() ? "1" : "0");
+    Serial.println(servo1.attached() ? "1" : "0");
+  } 
 
-  servo0Loop();
+  int servoTargetVal = servoTarget->getValue<int>();
+  if (prevTarget != servoTargetVal) {
+    prevTarget = servoTargetVal;
+    if (servoTargetVal > 100) {
+      servo1State = 1;
+      servo1DelayTicks = 200;
+    } else {
+      servo1State = 0;
+    }
+  }
   servo1Loop();
+
+  // servo0Loop();
+  // servo1Loop();
   
   if (print) {
     //Serial.print("Servo 0 Val: ");
@@ -553,7 +561,9 @@ void loop() {
     printMedicineCache();
   }
   //Serial.println("----------------------------------");
-  // //Serial.print("Num Bluetooth Devices Connected: ");
-  // //Serial.println(pServer->getConnectedCount());
+  if (print) {
+    Serial.print("Num Bluetooth Devices Connected: ");
+    Serial.println(pServer->getConnectedCount());
+  }
   delay(20);
 }

@@ -1,45 +1,20 @@
 import { useState } from 'react';
-import { MedicationAgent } from './medication-agent';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
+import { ConnectionChip } from '@/components/connection-chip';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
-import { useBleCounter } from '@/hooks/use-ble-counter';
+import { useDispenser } from '@/hooks/use-dispenser';
 import { useTheme } from '@/hooks/use-theme';
-import { getServerMedicationHistory, getServerMedicationSchedules } from '@/lib/medicine-api';
-import {
-  isValidServoValue,
-  MAX_SERVO_VALUE,
-  MIN_SERVO_VALUE,
-  type BleCounterStatus,
-} from '@/lib/ble-counter';
-
-const StatusColors: Record<BleCounterStatus, string> = {
-  idle: '#9CA3AF',
-  scanning: '#F59E0B',
-  connecting: '#F59E0B',
-  connected: '#22C55E',
-  error: '#EF4444',
-  unsupported: '#9CA3AF',
-};
-
-const StatusLabels: Record<BleCounterStatus, string> = {
-  idle: 'Starting',
-  scanning: 'Searching',
-  connecting: 'Connecting',
-  connected: 'Live',
-  error: 'Offline',
-  unsupported: 'Unavailable',
-};
+import { isValidServoValue, MAX_SERVO_VALUE, MIN_SERVO_VALUE } from '@/lib/ble-counter';
 
 /** Sends a servo angle to the ESP32 pill dispenser over Bluetooth Low Energy. */
 export function ServoWidget() {
   const theme = useTheme();
   const {
-    status, servoValue, deviceName, error, sendServoValue, sendMedicine,
-    getMedicineIdForName, saveMedicineName, removeMedicineSchedule, retry,
-  } = useBleCounter();
+    status, servoValue, deviceName, error, sendServoValue, retry,
+  } = useDispenser();
   const [draft, setDraft] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -94,12 +69,7 @@ export function ServoWidget() {
     <ThemedView type="backgroundElement" style={styles.container}>
       <View style={styles.header}>
         <ThemedText type="smallBold">Servo</ThemedText>
-        <View style={styles.status}>
-          <View style={[styles.statusDot, { backgroundColor: StatusColors[status] }]} />
-          <ThemedText type="small" themeColor="textSecondary">
-            {StatusLabels[status]}
-          </ThemedText>
-        </View>
+        <ConnectionChip status={status} />
       </View>
 
       <View style={styles.controls}>
@@ -155,16 +125,6 @@ export function ServoWidget() {
         </ThemedText>
       )}
 
-      <MedicationAgent
-        connected={isConnected}
-        sendMedicine={sendMedicine}
-        getMedicineIdForName={getMedicineIdForName}
-        saveMedicineName={saveMedicineName}
-        removeMedicineSchedule={removeMedicineSchedule}
-        getServerSchedules={getServerMedicationSchedules}
-        getServerHistory={getServerMedicationHistory}
-      />
-
       {status === 'error' && (
         <Pressable
           accessibilityRole="button"
@@ -194,16 +154,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: Spacing.two,
-  },
-  status: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-  },
-  statusDot: {
-    width: Spacing.two,
-    height: Spacing.two,
-    borderRadius: Spacing.one,
   },
   controls: {
     flexDirection: 'row',

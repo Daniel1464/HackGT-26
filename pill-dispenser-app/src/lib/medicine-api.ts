@@ -1,3 +1,4 @@
+import { parseRegisteredMedicines, type RegisteredMedicine } from './medication-table';
 import { validateMedicine, type MedicineRecord } from './medicine';
 
 export type ServerMedicationSchedule = {
@@ -80,9 +81,8 @@ export async function getServerMedicationSchedules(): Promise<ServerMedicationSc
   }
 }
 
-// Prepare before BLE writes so missing configuration cannot cause a partial save.
-export function prepareMedicineSync(input: MedicineRecord): () => Promise<void> {
-  const record = validateMedicine(input);
+/** Validates `EXPO_PUBLIC_SERVER_API_URL` and returns it without a trailing slash. */
+export function resolveServerBaseUrl(): string {
   const base = process.env.EXPO_PUBLIC_SERVER_API_URL?.trim().replace(/\/+$/, '');
   if (!base || !/^https?:\/\//i.test(base)) {
     throw new Error('Set EXPO_PUBLIC_SERVER_API_URL to your server HTTP(S) URL.');
@@ -91,6 +91,35 @@ export function prepareMedicineSync(input: MedicineRecord): () => Promise<void> 
   if (url.username || url.password || url.search || url.hash) {
     throw new Error('Server API URL must not contain credentials, a query, or a fragment.');
   }
+  return base;
+}
+
+/** Reads every medicine the server registry holds. */
+export async function fetchRegisteredMedicines(): Promise<RegisteredMedicine[]> {
+  const base = resolveServerBaseUrl();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(`${base}/medicines`, {
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Server returned HTTP ${response.status}.`);
+    }
+    return parseRegisteredMedicines(await response.json());
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('Server request timed out after 10 seconds.');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Prepare before BLE writes so missing configuration cannot cause a partial save.
+export function prepareMedicineSync(input: MedicineRecord): () => Promise<void> {
+  const record = validateMedicine(input);
+  const base = resolveServerBaseUrl();
   const body = JSON.stringify(record);
   return async () => {
     const controller = new AbortController();

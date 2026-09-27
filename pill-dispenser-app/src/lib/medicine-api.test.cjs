@@ -9,7 +9,7 @@ function load(filename) {
   });
   const module = { exports: {} };
   new Function('require', 'module', 'exports', outputText)(
-    name => name === './medicine' ? load('medicine.ts') : require(name), module, module.exports,
+    name => name.startsWith('./') ? load(`${name.slice(2)}.ts`) : require(name), module, module.exports,
   );
   return module.exports;
 }

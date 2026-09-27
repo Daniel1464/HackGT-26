@@ -5,6 +5,7 @@ import { ConversationProvider } from '@elevenlabs/react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
+import { DispenserProvider } from '@/hooks/use-dispenser';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -12,10 +13,12 @@ export default function TabLayout() {
   const colorScheme = useColorScheme();
   return (
     <ConversationProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <AnimatedSplashOverlay />
-        <AppTabs />
-      </ThemeProvider>
+      <DispenserProvider>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <AnimatedSplashOverlay />
+          <AppTabs />
+        </ThemeProvider>
+      </DispenserProvider>
     </ConversationProvider>
   );
 }
