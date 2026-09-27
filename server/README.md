@@ -20,7 +20,7 @@ Expo Go and the web preview are not supported for this mobile OAuth return flow.
 Configure provider credentials and a phone-reachable HTTPS `PUBLIC_URL` in the
 server `.env`. Register `${PUBLIC_URL}/auth/x/callback` and
 `${PUBLIC_URL}/auth/instagram/callback` in the respective provider dashboards.
-The frontend uses the same server URL/key documented below. Restart the server
+The frontend uses the same server URL documented below. Restart the server
 after updating it; reload the app. OAuth access tokens and client secrets remain
 server-side. Instagram needs a professional account and the required approved
 permissions. Provider approval/access restrictions still apply.
@@ -33,21 +33,20 @@ Cancelled/failed sign-ins do not fabricate a connected account. Use Refresh if
 you return manually. Keep access logging disabled to avoid logging handoff URLs.
 Disconnect deletes local tokens; revoke consent on the provider separately.
 
-Add these to `pill-dispenser-app/.env.local` (keep existing entries):
+Add this to `pill-dispenser-app/.env.local` (keep existing entries):
 
 ```dotenv
 EXPO_PUBLIC_SERVER_API_URL=https://your-server-or-tunnel.example
-EXPO_PUBLIC_SERVER_API_KEY=the-same-value-as-server-API_KEY
 ```
 
 Use a URL reachable from the phone, not the phone's `localhost`. Prefer HTTPS.
 For LAN development bind Uvicorn with `--host 0.0.0.0` and use the computer's LAN
 IP on the phone; native platform cleartext restrictions may require HTTPS.
 Restart Expo and fully reload the app after changing environment variables.
-The API key is bundled publicly for this single-user demo, not production-grade
-authentication. Never put social OAuth client secrets in the Expo environment.
+This single-user demo has no authentication. Never put social OAuth client
+secrets in the Expo environment.
 
-The shared frontend `sendMedicine` path writes BLE first, then calls authenticated
+The shared frontend `sendMedicine` path writes BLE first, then calls
 `PUT /medicines/{id}/schedule` with `{medicine,id,data:[{time:"HH:MM UTC",dose:2}]}`.
 Success requires both operations. Missing configuration fails before BLE writes;
 network failures/timeouts report that BLE already succeeded. There is no automatic
@@ -71,16 +70,14 @@ From `server/`, in PowerShell:
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item .env.example .env
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-# Put the generated value in API_KEY in .env; fill provider credentials below.
+# Fill provider credentials in .env.
 .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 6767 --reload --no-access-log
 ```
 
-Open `/docs` on your server origin. Click **Authorize** and enter API_KEY.
-Requests to medicine, account, notification and OAuth-start endpoints require
-the `X-API-Key` header. OAuth callbacks use browser-bound, expiring, one-use
-state instead. The example disables access logging to avoid logging OAuth codes.
-The API key protects the single user's records; OAuth connects posting accounts,
+Open `/docs` on your server origin. Requests to medicine, account, notification
+and OAuth-start endpoints are unauthenticated for this single-user demo. OAuth
+callbacks use browser-bound, expiring, one-use state instead. The example disables
+access logging to avoid logging OAuth codes. OAuth connects posting accounts,
 not multiple application users.
 
 Medicine times are daily 24-hour `HH:MM` in `TIMEZONE` (America/New_York by default).
@@ -120,9 +117,20 @@ The URL must be accessible to Meta without cookies or authorization. The server
 creates a media container, waits for FINISHED, and then publishes it.
 This implementation posts to the user's own feed; it does not send DMs.
 
+#### Instagram webhooks
+
+Configure the Meta app's Webhooks product with the callback URL
+`${PUBLIC_URL}/webhooks` and the same `INSTAGRAM_VERIFY_TOKEN` you set in
+`server/.env`. Meta sends a GET verification request with `hub.mode=subscribe`,
+`hub.challenge`, and `hub.verify_token`; the server echoes the challenge back as
+plain text when the token matches and otherwise returns 403. Register the
+webhook callback URL on a publicly reachable HTTPS origin. The Instagram OAuth
+callback path also answers these verification requests, so either URL can be
+registered.
+
 ### Connect accounts
 
-In authorized `/docs`, execute `GET /auth/x/login` or
+In `/docs`, execute `GET /auth/x/login` or
 `GET /auth/instagram/login`, then open the returned `authorization_url` in the
 same browser. Complete provider sign-in/consent. The callback returns account
 identity only; access/refresh tokens never appear in API responses.
@@ -140,6 +148,7 @@ provider-side app authorization can be revoked in that provider's settings.
 | DELETE | `/medicines/{0 or 1}` | Remove a slot |
 | GET | `/auth/{x or instagram}/login` | Get OAuth authorization URL |
 | GET | `/auth/{x or instagram}/callback` | Provider callback |
+| GET | `/webhooks` | Meta webhook verification; echoes `hub.challenge` |
 | GET | `/accounts` | List connected accounts without secrets |
 | PATCH | `/accounts/{x or instagram}` | Set `{"assigned": true}` or false |
 | DELETE | `/accounts/{x or instagram}` | Disconnect local account |

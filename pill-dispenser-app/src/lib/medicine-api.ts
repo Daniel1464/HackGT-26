@@ -49,7 +49,6 @@ export async function getServerMedicationSchedules(): Promise<ServerMedicationSc
 export function prepareMedicineSync(input: MedicineRecord): () => Promise<void> {
   const record = validateMedicine(input);
   const base = process.env.EXPO_PUBLIC_SERVER_API_URL?.trim().replace(/\/+$/, '');
-  const key = process.env.EXPO_PUBLIC_SERVER_API_KEY?.trim();
   if (!base || !/^https?:\/\//i.test(base)) {
     throw new Error('Set EXPO_PUBLIC_SERVER_API_URL to your server HTTP(S) URL.');
   }
@@ -57,7 +56,6 @@ export function prepareMedicineSync(input: MedicineRecord): () => Promise<void> 
   if (url.username || url.password || url.search || url.hash) {
     throw new Error('Server API URL must not contain credentials, a query, or a fragment.');
   }
-  if (!key) throw new Error('Set EXPO_PUBLIC_SERVER_API_KEY to match the server API_KEY.');
   const body = JSON.stringify(record);
   return async () => {
     const controller = new AbortController();
@@ -65,7 +63,7 @@ export function prepareMedicineSync(input: MedicineRecord): () => Promise<void> 
     try {
       const response = await fetch(`${base}/medicines/${record.id}/schedule`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
+        headers: { 'Content-Type': 'application/json' },
         body,
         signal: controller.signal,
       });

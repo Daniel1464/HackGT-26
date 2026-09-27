@@ -20,7 +20,6 @@ class DemoTests(unittest.TestCase):
             result = self.client.post(f"/auth/{provider}/mobile")
             self.assertEqual(result.status_code, 200)
             browser_url = result.json()["browser_url"]
-            self.assertNotIn("test-key", browser_url)
             opened = self.client.get(browser_url, follow_redirects=False)
             self.assertEqual(opened.status_code, 303)
             self.assertIn(f"oauth_{provider}=", opened.headers["set-cookie"])
@@ -58,7 +57,7 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(self.client.put("/medicines/0/schedule", json=value).status_code, 422)
         self.assertEqual(self.client.put("/medicines/1/schedule", json={**value, "data": []}).status_code, 422)
         with TestClient(create_app(self.settings)) as restarted:
-            self.assertEqual(restarted.get("/medicines/1", headers={"X-API-Key": "test-key"}).json(), stored)
+            self.assertEqual(restarted.get("/medicines/1").json(), stored)
         value["data"] = [{"time": "09:00 UTC", "dose": 3}]
         self.assertEqual(self.client.put("/medicines/1/schedule", json=value).status_code, 200)
         self.assertEqual(self.client.get("/medicines/1").json()["data"], value["data"])
@@ -67,16 +66,16 @@ class DemoTests(unittest.TestCase):
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.settings = Settings(database=str(Path(self.temp.name) / "test.sqlite3"), api_key="test-key",
+        self.settings = Settings(database=str(Path(self.temp.name) / "test.sqlite3"),
                                  public_url="http://testserver", x_client_id="x-id", x_client_secret="x-secret",
-                                 instagram_client_id="ig-id", instagram_client_secret="ig-secret")
+                                 instagram_client_id="ig-id", instagram_client_secret="ig-secret",
+                                 instagram_verify_token="verify-me")
         self.requests = []
         self.fail_x = False
         self.ig_processing = "FINISHED"
         self.app = create_app(self.settings, httpx.MockTransport(self.provider))
         self.client = TestClient(self.app)
         self.client.__enter__()
-        self.client.headers["X-API-Key"] = "test-key"
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
@@ -137,15 +136,13 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(self.client.post("/medicines", json={
             "id": 0, "name": "B", "time_to_take": "11:00"}).status_code, 409)
         with TestClient(create_app(self.settings)) as other:
-            self.assertEqual(other.get("/medicines/0", headers={"X-API-Key": "test-key"}).json()["name"], "Vitamin A")
+            self.assertEqual(other.get("/medicines/0").json()["name"], "Vitamin A")
         self.assertEqual(self.client.put("/medicines/0", json={
             "id": 0, "name": "A changed", "time_to_take": "11:00"}).status_code, 200)
         self.assertEqual(self.client.delete("/medicines/0").status_code, 204)
         self.assertEqual(self.client.get("/medicines/0").status_code, 404)
 
-    def test_auth_required_and_no_tokens_exposed(self):
-        self.assertEqual(self.client.get("/medicines", headers={"X-API-Key": "wrong"}).status_code, 401)
-        self.assertEqual(self.client.get("/auth/x/login", headers={"X-API-Key": "wrong"}).status_code, 401)
+    def test_no_tokens_exposed(self):
         self.login("x")
         body = self.client.get("/accounts").json()
         self.assertTrue(body["accounts"][0]["assigned"])
@@ -220,6 +217,25 @@ class DemoTests(unittest.TestCase):
         result = self.client.post("/medicines/0/notify-missed", json={"image_url": "https://example.com/demo.jpg"}).json()
         self.assertFalse(result["success"])
         self.assertFalse(any(r.url.path.endswith("/media_publish") for r in self.requests))
+
+    def test_instagram_webhook_verification(self):
+        params = {"hub.mode": "subscribe", "hub.challenge": "1158201444", "hub.verify_token": "verify-me"}
+        for path in ("/webhooks", "/auth/instagram/callback"):
+            result = self.client.get(path, params=params)
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(result.text, "1158201444")
+        self.assertEqual(self.client.get("/webhooks", params={**params, "hub.verify_token": "wrong"}).status_code, 403)
+        self.assertEqual(self.client.get("/webhooks", params={**params, "hub.mode": "unsubscribe"}).status_code, 403)
+        self.assertEqual(self.client.get("/webhooks", params={
+            "hub.mode": "subscribe", "hub.verify_token": "verify-me"}).status_code, 403)
+        self.assertEqual(self.client.get("/auth/instagram/callback").status_code, 422)
+
+    def test_instagram_webhook_requires_configured_token(self):
+        settings = Settings(database=str(Path(self.temp.name) / "unconfigured.sqlite3"),
+                            instagram_verify_token="")
+        with TestClient(create_app(settings)) as unconfigured:
+            self.assertEqual(unconfigured.get("/webhooks", params={
+                "hub.mode": "subscribe", "hub.challenge": "1158201444", "hub.verify_token": ""}).status_code, 403)
 
 
 if __name__ == "__main__":

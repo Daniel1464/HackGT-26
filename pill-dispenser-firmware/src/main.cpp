@@ -10,7 +10,8 @@
 #define REMOVE_MEDICINE_UUID "d2d13576-fe66-4af5-ad40-17535cc3fd2a"
 #define MEDICINE_NAME_UUID  "9c8b3e10-74d5-4e36-a5a1-938871102002"
 #define DEVICE_NAME         "ESP32-PillDispenser"
-#define SERVO_PIN           13
+#define SERVO_0_PIN         13
+#define SERVO_1_PIN         12
 #define BEAM_BREAK_PIN      26
 #define BEAM_BREAK_ACTIVE_LOW true
 #define A                   0.2347
@@ -24,12 +25,69 @@ constexpr size_t MEDICINE_MAX_DOSES = 32;
 constexpr size_t MEDICINE_NAME_MAX_BYTES = 64;
 
 
-Servo myServo;
+Servo servo0;
+Servo servo1;
 NimBLEServer *pServer;
 NimBLECharacteristic *servoTarget;
 NimBLECharacteristic *timeCharacteristic;
 Preferences persistentStorage;
 bool persistentStorageReady = false;
+
+// 0: stopped, 1: forward, 2: backward
+int servo0State = 0;
+int servo1State = 0;
+
+int servo0Target = 0;
+int servo1Target = 0;
+
+int servo0DelayTicks = 0;
+int servo1DelayTicks = 0;
+
+void servo0Loop() {
+  if (servo0State == 0 || servo0Target >= 240) {
+    servo0State = 0;
+    servo0Target = 0;
+    servo0DelayTicks = 0;
+  } else if (servo0State == 1 && servo0DelayTicks >= 15) {
+    servo0Target += 60;
+    servo0DelayTicks = 0;
+    servo0State = 2;
+  } else if (servo0State == 2 && servo0DelayTicks >= 30) {
+    servo0Target -= 30;
+    servo0DelayTicks = 0;
+    servo0State = 1;
+  } else {
+    servo0DelayTicks++;
+  }
+  if (servo0Target > 0) {
+    //Serial.print("Servo 0 Target: ");
+    //Serial.println(servo0Target);
+  }
+  servo0.write(180 - servo0Target);
+}
+
+void servo1Loop() {
+  if (servo1State == 0 || servo1Target >= 240) {
+    servo1State = 0;
+    servo1Target = 0;
+    servo1DelayTicks = 0;
+  } else if (servo1State == 1 && servo1DelayTicks >= 15) {
+    servo1Target += 60;
+    servo1DelayTicks = 0;
+    servo1State = 2;
+  } else if (servo1State == 2 && servo1DelayTicks >= 30) {
+    servo1Target -= 30;
+    servo1DelayTicks = 0;
+    servo1State = 1;
+  } else {
+    servo1DelayTicks++;
+  }
+  if (servo1Target > 0) {
+    //Serial.print("Servo 1 Target: ");
+    //Serial.println(servo1Target);
+  }
+  servo1.write(180 - servo1Target);
+}
 
 /**
  * Open the ESP32 NVS namespace used for pill-dispenser settings.
@@ -236,7 +294,7 @@ class MedicineCallbacks : public NimBLECharacteristicCallbacks {
       const std::string packet = characteristic->getValue();
       const bool saved = appendMedicineDosePacket(packet);
       characteristic->setValue(saved ? "SAVED" : "ERROR:packet");
-      Serial.println(saved ? "Medicine dose packet saved to flash" : "Invalid medicine dose packet");
+      //Serial.println(saved ? "Medicine dose packet saved to flash" : "Invalid medicine dose packet");
     }
 };
 
@@ -258,7 +316,7 @@ class MedicineNameCallbacks : public NimBLECharacteristicCallbacks {
         packet.size() <= MEDICINE_NAME_PACKET_MAX_BYTES &&
         writeMedicineName(static_cast<uint8_t>(packet[0]), packet.substr(1));
       characteristic->setValue(saved ? "SAVED" : "ERROR:packet");
-      Serial.println(saved ? "Medicine name saved to flash" : "Invalid medicine name packet");
+      //Serial.println(saved ? "Medicine name saved to flash" : "Invalid medicine name packet");
     }
 };
 
@@ -276,7 +334,7 @@ class RemoveMedicineCallbacks: public NimBLECharacteristicCallbacks {
       const bool removed = value.size() == REMOVE_MEDICINE_PACKET_BYTES &&
         removeMedicineById(static_cast<uint8_t>(value[0]));
       characteristic->setValue(removed ? "REMOVED" : "ERROR:packet");
-      Serial.println(removed ? "Medicine record and name removed from flash" : "Invalid remove medicine packet");
+      //Serial.println(removed ? "Medicine record and name removed from flash" : "Invalid remove medicine packet");
     }
 };
 
@@ -304,15 +362,15 @@ void syncClockFromCharacteristic() {
   char *end = nullptr;
   const unsigned long long parsed = strtoull(payload.c_str(), &end, 10);
   if (end == payload.c_str() || *end != '\0' || parsed == 0) {
-    Serial.println("Invalid UTC time received.");
+    //Serial.println("Invalid UTC time received.");
     return;
   }
 
   syncedUtcSeconds = parsed;
   syncedAtMillis = millis();
   clockSynchronized = true;
-  Serial.print("UTC clock synchronized to ");
-  Serial.println(static_cast<unsigned long>(syncedUtcSeconds));
+  //Serial.print("UTC clock synchronized to ");
+  //Serial.println(static_cast<unsigned long>(syncedUtcSeconds));
 }
 
 /**
@@ -335,7 +393,13 @@ void checkMedicineSchedule() {
       const uint16_t minutes = static_cast<uint16_t>(record[offset + 1]) |
         (static_cast<uint16_t>(record[offset + 2]) << 8);
       if (minutes == minutesNow) {
-        Serial.println("time to take medicine");
+        if (medicineId == 1) {
+          servo1State = 1;
+          servo1DelayTicks = 200;
+        } else {
+          servo0State = 1;
+          servo0DelayTicks = 200;
+        }
       }
     }
   }
@@ -346,13 +410,13 @@ void printMedicineCache() {
   uint8_t record[MEDICINE_DOSE_BYTES * MEDICINE_MAX_DOSES];
   for (uint8_t medicineId = 0; medicineId <= 1; medicineId++) {
     const size_t used = readMedicineRecord(medicineId, record, sizeof(record));
-    Serial.print("Medicine ");
-    Serial.print(medicineId);
-    Serial.print(" (");
-    Serial.print(readMedicineName(medicineId, "").c_str());
-    Serial.print(") cached doses: ");
+    //Serial.print("Medicine ");
+    //Serial.print(medicineId);
+    //Serial.print(" (");
+    //Serial.print(readMedicineName(medicineId, "").c_str());
+    //Serial.print(") cached doses: ");
     if (used == 0) {
-      Serial.println("none");
+      //Serial.println("none");
       continue;
     }
     for (size_t offset = 0; offset + MEDICINE_DOSE_BYTES <= used; offset += MEDICINE_DOSE_BYTES) {
@@ -364,13 +428,18 @@ void printMedicineCache() {
         (static_cast<uint32_t>(record[offset + 6]) << 24);
       char timeText[6];
       snprintf(timeText, sizeof(timeText), "%02u:%02u", minutes / 60, minutes % 60);
-      Serial.print(timeText);
-      Serial.print(" UTC dose ");
-      Serial.print(dose);
-      Serial.print("; ");
+      //Serial.print(timeText);
+      //Serial.print(" UTC dose ");
+      //Serial.print(dose);
+      //Serial.print("; ");
     }
-    Serial.println();
+    //Serial.println();
   }
+
+  //Serial.print("Medicine 0 name: ");
+  //Serial.println(readMedicineName(0, "NONE").c_str());
+  //Serial.print("Medicine 1 name: ");
+  //Serial.println(readMedicineName(1, "NONE").c_str());
 }
 
 void setupBluetooth() {
@@ -416,65 +485,53 @@ void setupBluetooth() {
   pAdvertising->enableScanResponse(true); // Helps iOS devices discover it
   
   NimBLEDevice::startAdvertising();
-  Serial.println("Advertising started! Check your phone.");
-}
-
-int state = 0;
-bool stopped = true;
-
-void servoActionInit() {
-  stopped = false;
-  state = 0;
-}
-
-bool servoActionLoop() {
-  if (myServo.read() > 170) {
-    stopped = true;
-  } else if (state == 0) {
-    myServo.write(myServo.read() + 30);
-    state = 1;
-  } else if (state == 1) {
-    myServo.write(myServo.read() - 15);
-    state = 0;
-  } else {
-    servoActionInit();
-  }
-  return stopped;
+  //Serial.println("Advertising started! Check your phone.");
 }
 
 void setup() {
   Serial.begin(115200);
   if (!beginPersistentStorage()) {
-    Serial.println("Warning: persistent storage could not be opened.");
+    //Serial.println("Warning: persistent storage could not be opened.");
   }
+
   pinMode(BEAM_BREAK_PIN, BEAM_BREAK_ACTIVE_LOW ? INPUT_PULLUP : INPUT_PULLDOWN);
   ESP32PWM::allocateTimer(0);
-  myServo.setPeriodHertz(50);      // standard 50 Hz servo signal
-  myServo.attach(SERVO_PIN, 1000, 2000); // min/max pulse widths in µs
+  servo0.setPeriodHertz(50);      // standard 50 Hz servo signal
+  servo0.attach(SERVO_0_PIN); // min/max pulse widths in µs
+  servo1.setPeriodHertz(50);      // standard 50 Hz servo signal
+  servo1.attach(SERVO_1_PIN); // min/max pulse widths in µs
+
+  servo0.write(180);
+  servo1.write(180);
+
   setupBluetooth();
 }
 
 int loopCounter = 0;
+int prevTarget = 0;
 
 void loop() {
   loopCounter++;
-  bool print = loopCounter % 10 == 0;
+  bool print = loopCounter % 50 == 0;
   syncClockFromCharacteristic();
 
-  // Serial.print("Beam break: ");
-  // Serial.println(digitalRead(BEAM_BREAK_PIN));
+  //Serial.print("Beam break: ");
+  //Serial.println(digitalRead(BEAM_BREAK_PIN));
 
   if (print) {
-    Serial.print("Servo attached? ");
-    Serial.println(myServo.attached() ? "true" : "false");
+    //Serial.print("Servos attached? ");
+    //Serial.print(servo0.attached() ? "1" : "0");
+    //Serial.println(servo1.attached() ? "1" : "0");
   }
 
-  int servoTargetVal = servoTarget->getValue<int>();
-  myServo.write(servoTargetVal);
-
+  servo0Loop();
+  servo1Loop();
+  
   if (print) {
-    Serial.print("Servo Val: ");
-    Serial.println(myServo.read());
+    //Serial.print("Servo 0 Val: ");
+    //Serial.println(servo0.read());
+    //Serial.print("Servo 1 Val: ");
+    //Serial.println(servo1.read());
   }
 
   if (clockSynchronized) {
@@ -487,17 +544,16 @@ void loop() {
 
   checkMedicineSchedule();
   if (print) {
-    Serial.print("Num Devices Connected: ");
-    Serial.println(pServer->getConnectedCount());
-    Serial.print("UTC time: ");
+    //Serial.print("UTC time: ");
     if (clockSynchronized) {
-      Serial.println(static_cast<unsigned long>(currentUtcSeconds()));
+      //Serial.println(static_cast<unsigned long>(currentUtcSeconds()));
     } else {
-      Serial.println("not synchronized");
+      //Serial.println("not synchronized");
     }
     printMedicineCache();
   }
-  // Serial.print("Num Bluetooth Devices Connected: ");
-  // Serial.println(pServer->getConnectedCount());
-  delay(100);
+  //Serial.println("----------------------------------");
+  // //Serial.print("Num Bluetooth Devices Connected: ");
+  // //Serial.println(pServer->getConnectedCount());
+  delay(20);
 }

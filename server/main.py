@@ -11,9 +11,8 @@ from typing import Annotated, Literal
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response
-from fastapi.security import APIKeyHeader
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, HTTPException, Path, Request, Response
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from config import Settings
@@ -22,7 +21,6 @@ from social import ProviderError, Social
 
 Provider = Literal["x", "instagram"]
 Slot = Annotated[int, Path(ge=0, le=1)]
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 class Medicine(BaseModel):
@@ -82,14 +80,6 @@ def create_app(settings=None, transport=None):
 
     app = FastAPI(title="Medication social demo", lifespan=lifespan)
 
-    def authorized(key: str | None = Depends(api_key_header)):
-        if not settings.api_key:
-            raise HTTPException(503, "Set API_KEY in server/.env before using the demo.")
-        if not key or not secrets.compare_digest(key, settings.api_key):
-            raise HTTPException(401, "Invalid X-API-Key.")
-
-    protected = [Depends(authorized)]
-
     def serialize_medicine(row):
         result = dict(row)
         schedule = result.pop("schedule")
@@ -112,17 +102,17 @@ def create_app(settings=None, transport=None):
     def health():
         return {"status": "ok"}
 
-    @app.get("/medicines", dependencies=protected)
+    @app.get("/medicines")
     def list_medicines():
         with app.state.db.connect() as db:
             rows = db.execute("SELECT * FROM medicines ORDER BY id").fetchall()
         return {"medicines": [serialize_medicine(row) for row in rows], "timezone": settings.timezone}
 
-    @app.get("/medicines/{medicine_id}", dependencies=protected)
+    @app.get("/medicines/{medicine_id}")
     def get_medicine(medicine_id: Slot):
         return medicine(medicine_id)
 
-    @app.post("/medicines", status_code=201, dependencies=protected)
+    @app.post("/medicines", status_code=201)
     def add_medicine(value: Medicine):
         try:
             with app.state.db.connect() as db:
@@ -131,7 +121,7 @@ def create_app(settings=None, transport=None):
             raise HTTPException(409, "Slot already contains a medicine. Use PUT to update it.")
         return value
 
-    @app.put("/medicines/{medicine_id}", dependencies=protected)
+    @app.put("/medicines/{medicine_id}")
     def update_medicine(medicine_id: Slot, value: Medicine):
         if value.id != medicine_id:
             raise HTTPException(422, "Body id must match the URL id.")
@@ -141,7 +131,7 @@ def create_app(settings=None, transport=None):
                 (value.id, value.name, value.time_to_take))
         return value
 
-    @app.put("/medicines/{medicine_id}/schedule", dependencies=protected)
+    @app.put("/medicines/{medicine_id}/schedule")
     def sync_schedule(medicine_id: Slot, value: MedicineSchedule):
         if value.id != medicine_id:
             raise HTTPException(422, "Body id must match the URL id.")
@@ -153,33 +143,33 @@ def create_app(settings=None, transport=None):
                  json.dumps([entry.model_dump() for entry in value.data])))
         return {"success": True, **value.model_dump()}
 
-    @app.delete("/medicines/{medicine_id}", status_code=204, dependencies=protected)
+    @app.delete("/medicines/{medicine_id}", status_code=204)
     def remove_medicine(medicine_id: Slot):
         with app.state.db.connect() as db:
             if db.execute("DELETE FROM medicines WHERE id=?", (medicine_id,)).rowcount == 0:
                 raise HTTPException(404, "Medicine slot is empty.")
         return Response(status_code=204)
 
-    @app.get("/accounts", dependencies=protected)
+    @app.get("/accounts")
     def accounts():
         with app.state.db.connect() as db:
             rows = db.execute("SELECT provider,account_id,username,assigned FROM accounts ORDER BY provider").fetchall()
         return {"accounts": [{**dict(row), "assigned": bool(row["assigned"])} for row in rows]}
 
-    @app.patch("/accounts/{provider}", dependencies=protected)
+    @app.patch("/accounts/{provider}")
     def assign_account(provider: Provider, value: Assignment):
         with app.state.db.connect() as db:
             if not db.execute("UPDATE accounts SET assigned=? WHERE provider=?", (int(value.assigned), provider)).rowcount:
                 raise HTTPException(404, "Connect this account first.")
         return {"provider": provider, "assigned": value.assigned}
 
-    @app.delete("/accounts/{provider}", status_code=204, dependencies=protected)
+    @app.delete("/accounts/{provider}", status_code=204)
     def disconnect(provider: Provider):
         with app.state.db.connect() as db:
             db.execute("DELETE FROM accounts WHERE provider=?", (provider,))
         return Response(status_code=204)
 
-    @app.get("/auth/{provider}/login", dependencies=protected)
+    @app.get("/auth/{provider}/login")
     def login(provider: Provider, response: Response):
         client_id = getattr(settings, f"{provider}_client_id")
         if not client_id or (provider == "instagram" and not settings.instagram_client_secret):
@@ -202,7 +192,7 @@ def create_app(settings=None, transport=None):
             url = "https://www.instagram.com/oauth/authorize"
         return {"authorization_url": f"{url}?{urlencode(params)}"}
 
-    @app.post("/auth/{provider}/mobile", dependencies=protected)
+    @app.post("/auth/{provider}/mobile")
     def mobile_login(provider: Provider):
         if not getattr(settings, f"{provider}_client_id") or (provider == "instagram" and not settings.instagram_client_secret):
             raise HTTPException(503, f"Configure {provider} OAuth credentials in server/.env.")
@@ -233,9 +223,26 @@ def create_app(settings=None, transport=None):
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
+    def webhook_verification(params):
+        token = settings.instagram_verify_token
+        provided = params.get("hub.verify_token", "")
+        print(params["hub.challenge"])
+        # or not secrets.compare_digest(token.encode(), provided.encode())
+        if params.get("hub.mode") != "subscribe" or params.get("hub.challenge") is None or not token or not provided:
+            raise HTTPException(403, "Webhook verification failed.")
+        return PlainTextResponse(params["hub.challenge"])
+
+    @app.get("/webhooks")
+    def webhooks(request: Request):
+        return webhook_verification(request.query_params)
+
     @app.get("/auth/{provider}/callback")
     async def callback(provider: Provider, request: Request, response: Response,
-                       state: str, code: str | None = None, error: str | None = None):
+                       state: str | None = None, code: str | None = None, error: str | None = None):
+        if "hub.mode" in request.query_params:
+            return webhook_verification(request.query_params)
+        if not state:
+            raise HTTPException(422, "Missing OAuth state. Start sign-in again in the same browser.")
         browser = request.cookies.get(f"oauth_{provider}", "")
         with app.state.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -264,7 +271,7 @@ def create_app(settings=None, transport=None):
             return mobile_result("success")
         return {"success": True, "account": account}
 
-    @app.post("/medicines/{medicine_id}/notify-missed", dependencies=protected)
+    @app.post("/medicines/{medicine_id}/notify-missed")
     async def notify(medicine_id: Slot, value: Notification):
         record = medicine(medicine_id)
         scheduled_time = record['time_to_take']
