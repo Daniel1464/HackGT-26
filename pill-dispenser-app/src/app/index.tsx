@@ -1,4 +1,6 @@
 import { StyleSheet, View } from 'react-native';
+import { useCallback, useState } from 'react';
+import { ConversationProvider } from '@elevenlabs/react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ConnectionChip } from '@/components/connection-chip';
@@ -11,8 +13,21 @@ import { useMedicationConversation } from '@/hooks/use-medication-conversation';
 import { orbConnectionFor, orbTapFor, resolveOrbState } from '@/lib/voice-orb';
 
 export default function HomeScreen() {
+  const [sessionKey, setSessionKey] = useState(0);
+  const [previousError, setPreviousError] = useState<string>();
+  const resetSession = useCallback((error?: string) => {
+    setPreviousError(error);
+    setSessionKey(key => key + 1);
+  }, []);
+  // Reset only voice state, never the shared BLE connection or navigation tree.
+  return <ConversationProvider key={sessionKey}>
+    <VoiceHome onFinished={resetSession} previousError={previousError} />
+  </ConversationProvider>;
+}
+
+function VoiceHome({ onFinished, previousError }: { onFinished: (error?: string) => void; previousError?: string }) {
   const dispenser = useDispenser();
-  const conversation = useMedicationConversation(dispenser);
+  const conversation = useMedicationConversation(dispenser, onFinished, previousError);
 
   const connection = orbConnectionFor(dispenser.status);
   const state = resolveOrbState(conversation.status, conversation.isSpeaking, connection);
@@ -47,7 +62,8 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.stage}>
-          <VoiceOrb disabled={tap === 'none'} onPress={onOrbPress} state={state} />
+          <VoiceOrb disabled={tap === 'none' || conversation.busy} onPress={onOrbPress} state={state} />
+          {conversation.busy && <ThemedText accessibilityLiveRegion="polite">Closing microphone…</ThemedText>}
         </View>
 
         {hasTranscript && (

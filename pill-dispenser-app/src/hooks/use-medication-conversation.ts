@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useConversation } from '@elevenlabs/react-native';
 
 import type { UseBleCounterResult } from '@/lib/ble-counter';
 import { createMedicationClientTools } from '@/lib/medication-agent-tools';
 import { getServerMedicationHistory, getServerMedicationSchedules } from '@/lib/medicine-api';
+import { prepareVoiceAudio, releaseVoiceAudio } from '@/lib/voice-audio';
+import { VoiceSessionLifecycle, type VoicePhase } from '@/lib/voice-session';
 
 const AGENT_ID = 'agent_9101m3e5mt3ne7xv0mnaxm23dwwe';
 
@@ -27,10 +29,23 @@ export type MedicationConversation = {
  * Lives in a hook so the front page only has to render: the orb reads `status`
  * and `isSpeaking`, and the transcript reads `message`, `saved` and `error`.
  */
-export function useMedicationConversation(dispenser: UseBleCounterResult): MedicationConversation {
-  const [error, setError] = useState<string | null>(null);
+export function useMedicationConversation(dispenser: UseBleCounterResult, onFinished: (error?: string) => void, previousError?: string): MedicationConversation {
+  const [error, setError] = useState<string | null>(previousError ?? null);
   const [saved, setSaved] = useState<string | null>(null);
-  const [isEnding, setIsEnding] = useState(false);
+  const [phase, setPhase] = useState<VoicePhase>('disconnected');
+  const [lifecycle] = useState(() => new VoiceSessionLifecycle({
+    prepare: prepareVoiceAudio, release: releaseVoiceAudio,
+    change: setPhase, error: setError, finished: onFinished,
+  }));
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      // React Strict Mode replays effects; only close on a real unmount.
+      queueMicrotask(() => { if (!mounted.current) lifecycle.dispose(); });
+    };
+  }, [lifecycle]);
 
   const connected = dispenser.status === 'connected';
   const tools = createMedicationClientTools({
@@ -52,37 +67,42 @@ export function useMedicationConversation(dispenser: UseBleCounterResult): Medic
   });
 
   const conversation = useConversation({
+    micMuted: false,
     clientTools: {
       // This SDK version accepts strings; preserve the structured result as JSON.
       saveMedicationSchedule: async (parameters) => JSON.stringify(await tools.saveMedicationSchedule(parameters)),
       getMedicationSchedule: async () => JSON.stringify(await tools.getMedicationSchedule()),
       removeMedicineSchedule: async (parameters) => JSON.stringify(await tools.removeMedicineSchedule(parameters)),
     },
-    onError: (message) => {
-      setIsEnding(false);
-      setError(String(message));
+    onConversationCreated: (session) => lifecycle.created(session),
+    onConnect: () => lifecycle.connected(),
+    onError: (message) => { void lifecycle.fail(message); },
+    onDisconnect: (details) => {
+      // A failed signaling connection may arrive only as onDisconnect, not onError.
+      if (details.reason === 'error') {
+        void lifecycle.fail('Voice connection lost. Tap the orb to reconnect.');
+      } else {
+        void lifecycle.finish();
+      }
     },
-    onDisconnect: () => setIsEnding(false),
   });
 
-  const active = conversation.status === 'connected' || conversation.status === 'connecting';
   const toggle = () => {
-    if (isEnding) return;
-    if (active) {
-      setIsEnding(true);
-      conversation.endSession();
+    if (lifecycle.phase === 'connecting' || lifecycle.phase === 'disconnecting') return;
+    if (lifecycle.phase === 'connected') {
+      void lifecycle.finish();
       return;
     }
     setError(null);
     setSaved(null);
-    conversation.startSession({ agentId: AGENT_ID });
+    void lifecycle.start(() => conversation.startSession({ agentId: AGENT_ID, connectionType: 'webrtc' }));
   };
 
   return {
-    status: String(conversation.status),
+    status: phase,
     isSpeaking: Boolean(conversation.isSpeaking),
     message: conversation.message ?? '',
-    busy: isEnding,
+    busy: phase === 'disconnecting',
     saved,
     error,
     toggle,
