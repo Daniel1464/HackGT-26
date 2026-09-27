@@ -1,4 +1,5 @@
 import { type MedicineRecord, validateMedicine } from './medicine';
+import { type ServerMedicationSchedule } from './medicine-api';
 
 export type MedicationIdentity = Pick<MedicineRecord, 'medicine' | 'id'>;
 
@@ -41,8 +42,73 @@ export function adaptMedicationSchedule(
   throw new Error(`Cannot resolve medication "${medicineName.trim()}" to a configured ID.`);
 }
 
-const SCHEDULE_READ_UNAVAILABLE = 'The dispenser stores dose packets, but its BLE interface does not expose schedule contents or medicine names.';
 const PREVIOUS_STATUS_UNAVAILABLE = 'The app and dispenser do not expose a previous dispense event or confirmation status.';
+
+function normalizeMedicationName(value: string) {
+  const normalized = value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return normalized.replace(/^vitamin([a-z])$/, 'vit$1');
+}
+
+function editDistance(left: string, right: string) {
+  let row = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= right.length; j++) {
+      next[j] = Math.min(next[j - 1] + 1, row[j] + 1, row[j - 1] + (left[i - 1] === right[j - 1] ? 0 : 1));
+    }
+    row = next;
+  }
+  return row[right.length];
+}
+
+export function findNextMedication(
+  medicineQuery: unknown,
+  schedules: readonly ServerMedicationSchedule[],
+  now = new Date(),
+) {
+  if (typeof medicineQuery !== 'string' || !medicineQuery.trim()) {
+    throw new Error('medicineQuery must contain the medication name from the user.');
+  }
+  const query = normalizeMedicationName(medicineQuery);
+  const named = schedules.map(item => ({ item, name: normalizeMedicationName(item.medicine) }));
+  const exact = named.filter(item => item.name === query);
+  let matches = exact;
+  if (matches.length === 0 && query.length >= 7) {
+    const close = named.map(candidate => ({ ...candidate, distance: editDistance(query, candidate.name) }))
+      .filter(candidate => candidate.distance <= Math.max(1, Math.floor(Math.min(query.length, candidate.name.length) * 0.15)))
+      .sort((left, right) => left.distance - right.distance);
+    if (close.length > 1 && close[0].distance === close[1].distance) {
+      throw new Error(`"${medicineQuery.trim()}" could refer to more than one medication. Please clarify the name.`);
+    }
+    matches = close.slice(0, 1);
+  }
+  if (matches.length === 0) {
+    throw new Error(`I couldn't match "${medicineQuery.trim()}" to a saved medication. Please use its saved name.`);
+  }
+  if (matches.length > 1) throw new Error(`"${medicineQuery.trim()}" matches multiple saved medications. Please clarify.`);
+
+  const { item } = matches[0];
+  if (!item.data?.length) {
+    throw new Error(`${item.medicine} has no readable dose schedule on the server. Sync its schedule from the app first.`);
+  }
+  const candidates = item.data.map(entry => {
+    const match = /^(\d{2}):(\d{2}) UTC$/.exec(entry.time);
+    if (!match || !Number.isInteger(entry.dose) || entry.dose <= 0) {
+      throw new Error(`The saved schedule for ${item.medicine} is invalid.`);
+    }
+    const next = new Date(now);
+    next.setUTCHours(Number(match[1]), Number(match[2]), 0, 0);
+    if (next.getTime() <= now.getTime()) next.setUTCDate(next.getUTCDate() + 1);
+    return { next, quantity: entry.dose };
+  }).sort((left, right) => left.next.getTime() - right.next.getTime());
+  const nearest = candidates[0];
+  return {
+    success: true as const,
+    medicineName: item.medicine,
+    quantity: nearest.quantity,
+    time: `${String(nearest.next.getHours()).padStart(2, '0')}:${String(nearest.next.getMinutes()).padStart(2, '0')}`,
+  };
+}
 
 export function createMedicationClientTools(options: {
   connected: boolean;
@@ -50,6 +116,7 @@ export function createMedicationClientTools(options: {
   getMedicationNames: () => Promise<Array<{ id: 0 | 1; medicineName: string }>>;
   saveMedicineName: (medicineID: 0 | 1, medicineName: string) => Promise<void>;
   medications?: readonly MedicationIdentity[];
+  getServerSchedules: () => Promise<readonly ServerMedicationSchedule[]>;
   sendMedicine: (record: MedicineRecord) => Promise<void>;
   removeMedicineSchedule?: (medicineID: 0 | 1) => Promise<void>;
   onSaved: (medicineName: string) => void;
@@ -87,7 +154,17 @@ export function createMedicationClientTools(options: {
         return failure(error);
       }
     },
-    getNextMedication: async () => failure(new Error(SCHEDULE_READ_UNAVAILABLE)),
+    getNextMedication: async (parameters: unknown) => {
+      try {
+        const medicineQuery = parameters && typeof parameters === 'object'
+          ? (parameters as Record<string, unknown>).medicineQuery
+          : undefined;
+        const schedules = await options.getServerSchedules();
+        return findNextMedication(medicineQuery, schedules);
+      } catch (error) {
+        return failure(error);
+      }
+    },
     getPrevMedicationStatus: async () => failure(new Error(PREVIOUS_STATUS_UNAVAILABLE)),
     removeMedicineSchedule: async (parameters: unknown) => {
       try {

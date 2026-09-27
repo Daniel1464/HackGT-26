@@ -7,6 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useBleCounter } from '@/hooks/use-ble-counter';
 import { useTheme } from '@/hooks/use-theme';
+import { getServerMedicationSchedules } from '@/lib/medicine-api';
 import {
   isValidServoValue,
   MAX_SERVO_VALUE,
@@ -161,6 +162,7 @@ export function ServoWidget() {
         getMedicationNames={getMedicationNames}
         saveMedicineName={saveMedicineName}
         removeMedicineSchedule={removeMedicineSchedule}
+        getServerSchedules={getServerMedicationSchedules}
       />
 
       {status === 'error' && (

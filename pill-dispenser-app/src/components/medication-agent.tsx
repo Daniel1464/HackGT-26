@@ -16,10 +16,11 @@ type MedicationAgentProps = {
   getMedicationNames: () => Promise<Array<{ id: 0 | 1; medicineName: string }>>;
   saveMedicineName: (medicineID: 0 | 1, medicineName: string) => Promise<void>;
   removeMedicineSchedule: (medicineID: number) => Promise<void>;
+  getServerSchedules: () => Promise<Array<{ id: 0 | 1; medicine: string; data?: Array<{ time: string; dose: number }> }>>;
 };
 
 /** Live ElevenLabs conversation using the dashboard's case-sensitive tool names. */
-export function MedicationAgent({ connected, sendMedicine, getMedicineIdForName, getMedicationNames, saveMedicineName, removeMedicineSchedule }: MedicationAgentProps) {
+export function MedicationAgent({ connected, sendMedicine, getMedicineIdForName, getMedicationNames, saveMedicineName, removeMedicineSchedule, getServerSchedules }: MedicationAgentProps) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [isEnding, setIsEnding] = useState(false);
@@ -30,6 +31,7 @@ export function MedicationAgent({ connected, sendMedicine, getMedicineIdForName,
     saveMedicineName,
     sendMedicine,
     removeMedicineSchedule,
+    getServerSchedules,
     onSaved: (medicineName) => {
       setError(null);
       setSaved(`${medicineName} schedule sent to dispenser.`);
@@ -40,7 +42,7 @@ export function MedicationAgent({ connected, sendMedicine, getMedicineIdForName,
     clientTools: {
       // This SDK version accepts strings; preserve the structured result as JSON.
       saveMedicationSchedule: async (parameters) => JSON.stringify(await tools.saveMedicationSchedule(parameters)),
-      getNextMedication: async () => JSON.stringify(await tools.getNextMedication()),
+      getNextMedication: async (parameters) => JSON.stringify(await tools.getNextMedication(parameters)),
       getMedicationSchedule: async () => JSON.stringify(await tools.getMedicationSchedule()),
       getPrevMedicationStatus: async () => JSON.stringify(await tools.getPrevMedicationStatus()),
       removeMedicineSchedule: async (parameters) => JSON.stringify(await tools.removeMedicineSchedule(parameters)),
