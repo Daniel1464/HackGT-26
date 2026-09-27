@@ -1,0 +1,24 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { Buffer } = require('node:buffer');
+const root = path.resolve(__dirname, '../..');
+test('firmware emits a valid iBeacon that matches both native platform identities', () => {
+  const firmware = fs.readFileSync(path.join(root, '../pill-dispenser-firmware/include/dispenser-beacon.h'), 'utf8');
+  const bytes = Buffer.from(firmware.match(/DISPENSER_BEACON\[\] = \{([^}]+)\}/)[1].match(/0x[\da-f]+/gi).map(value => parseInt(value, 16)));
+  assert.equal(bytes.length, 25);
+  assert.equal(3 + 2 + bytes.length, 30, 'flags and manufacturer AD fit the 31-byte limit');
+  assert.equal(bytes.readUInt16LE(0), 0x004c);
+  assert.equal(bytes.subarray(2, 4).toString('hex'), '0215');
+  assert.equal(bytes.readUInt16BE(20), 1);
+  assert.equal(bytes.readUInt16BE(22), 1);
+  const swift = fs.readFileSync(path.join(root, 'modules/timed-beacon/ios/TimedBeaconModule.swift'), 'utf8');
+  const uuid = swift.match(/UUID\(uuidString: "([^"]+)"/)[1].replaceAll('-', '');
+  assert.equal(bytes.subarray(4, 20).toString('hex'), uuid);
+  const kotlin = fs.readFileSync(path.join(root, 'modules/timed-beacon/android/src/main/java/expo/modules/timedbeacon/TimedBeaconModule.kt'), 'utf8');
+  const filter = Buffer.from(kotlin.match(/val data = byteArrayOf\(([^\n]+)\)/)[1].match(/0x[\da-f]+/gi).map(value => parseInt(value, 16)));
+  assert.deepEqual(filter, bytes.subarray(2, 24));
+  assert.match(firmware, /setConnectableMode\(BLE_GAP_CONN_MODE_NON\)/);
+  assert.match(firmware, /response.addServiceUUID/);
+});

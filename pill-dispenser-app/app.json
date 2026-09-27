@@ -13,6 +13,7 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Detect whether your TiMED dispenser beacon is nearby. Your GPS location is not collected.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Monitor your dispenser beacon while the app is in the background.",
+        "NSLocationAlwaysUsageDescription": "Monitor your dispenser beacon while the app is in the background.",
         "NSMicrophoneUsageDescription": "This app uses the microphone to talk with the Medication Assistant."
       }
     },
