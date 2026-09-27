@@ -1,12 +1,14 @@
 import { AudioModule } from 'expo-audio';
+import { AudioSession } from '@livekit/react-native';
 
 export async function prepareVoiceAudio() {
   const permission = await AudioModule.requestRecordingPermissionsAsync();
   if (!permission.granted) throw new Error('Microphone permission is required to talk to the assistant.');
-  // ElevenLabs owns configure/start/stop. Extra stop calls change the shared
-  // RTCAudioSession activation count and can disable capture in the next call.
+  // Failed SDK connection setup can leave the native session active without a cleanup handle.
+  await AudioSession.stopAudioSession();
+  // ElevenLabs configures and starts the next audio session itself.
 }
 
 export async function releaseVoiceAudio() {
-  // The awaited SDK endSession() already stops native audio. Do not stop twice.
+  await AudioSession.stopAudioSession();
 }
