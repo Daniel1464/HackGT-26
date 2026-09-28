@@ -1,6 +1,6 @@
-# HackGT 26
+# TiMED
 
-Daniel, Steve, Christopher and Jasper's shenanigans
+An automatic pill dispenser for the elderly and the visually impaired, that's entirely voice controlled.
 
 # Project Setup: Firmware
 
